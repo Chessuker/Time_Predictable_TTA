@@ -16,7 +16,17 @@
 *.bin
 *.ltx
 
+# Papers (ดู docs/papers/.gitignore)
+docs/papers/*.pdf
+
 # OS / editor
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# generated plots
+host/plant_model/out/
