@@ -4,8 +4,8 @@ Pass 1 parses lines, assigns addresses and collects symbols. Pass 2 evaluates
 expressions, validates every move against the ISA and the assembler rules, and
 encodes. All errors are collected; nothing is produced if there is any error.
 
-Not done here: the CFG-based static checks S1, S3, S4 and recursion (S5), which
-run after a successful assembly (Phase 1 step 5).
+The CFG-based static checks (S1, S3, S4, S5 recursion and cross-function jumps)
+live in checks.py and run once both passes succeed.
 """
 import re
 from dataclasses import dataclass, field
@@ -104,7 +104,10 @@ class _State:
     errors: list = field(default_factory=list)
 
 
-def assemble(source, filename="<input>", imem_words=spec.IMEM_WORDS, dmem_words=spec.DMEM_WORDS):
+def assemble(source, filename="<input>", imem_words=spec.IMEM_WORDS, dmem_words=spec.DMEM_WORDS,
+             checks=True):
+    """checks=False skips the CFG static checks; only for ISS tests that need a
+    program the assembler would reject (the ISS must catch those at run time)."""
     lines = source.splitlines()
     st = _State()
     for lineno, raw in enumerate(lines, 1):
@@ -116,6 +119,12 @@ def assemble(source, filename="<input>", imem_words=spec.IMEM_WORDS, dmem_words=
     prog = _pass2(st, filename, lines, imem_words, dmem_words)
     if st.errors:
         raise AssemblyFailed(filename, st.errors)
+    if not checks:
+        return prog
+    from .checks import run_checks          # needs a fully encoded program
+    errors = [AsmError(line, 1, msg) for line, msg in run_checks(prog)]
+    if errors:
+        raise AssemblyFailed(filename, errors)
     return prog
 
 

@@ -187,6 +187,7 @@ error รายงานเป็น `file:line:col: error: message` และ a
 - เหตุผล: ถ้าไม่บังคับ โค้ดจะไหลเข้า function ถัดไปหรือวิ่งเลยท้ายโปรแกรมเงียบ ๆ (ถ้าวิ่งเลยท้ายจะเจอ word ที่เป็น 0 แล้ว trap แต่ควรจับได้ตั้งแต่ตอน assemble)
 
 **Static check ตาม timing_model §4** assembler รัน S1–S5 และ S7 หลัง assemble สำเร็จ ส่วน S6 เป็นงานของ WCET tool
+- ส่วนหนึ่งของ S5 (CFG แบบ structured): **target ของ jump ต้องอยู่ใน function เดียวกับ move ที่ jump** การเข้า function อื่นทำได้ทาง `pc.t_call` เท่านั้น เพื่อให้แต่ละ function เป็น CFG ปิดที่วิเคราะห์แยกกันได้
 
 ---
 

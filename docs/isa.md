@@ -4,6 +4,7 @@
 
 **บันทึกการแก้หลัง freeze**
 - 2026-10-02: ตัวอย่างโค้ดใช้ `#label` สำหรับ label ที่ใช้เป็นค่า ตาม [asm_syntax.md](asm_syntax.md) แก้เฉพาะ syntax ของตัวอย่าง ไม่เปลี่ยน semantics
+- 2026-10-05: §6 ระบุว่า cause 5 ตรวจเฉพาะ jump ที่ taken เป็นการระบุกรณีที่เดิมไม่ได้เขียนไว้ ไม่ขัดกับความหมายเดิม จึงไม่เปลี่ยน `SPEC_ID`
 
 เอกสารนี้กำหนดสิ่งที่ software มองเห็น ได้แก่ encoding, port และ semantics ส่วนเวลาของทุกอย่างอยู่ใน [timing_model.md](timing_model.md) ซึ่งถือเป็นสัญญาเดียวกัน ถ้าสองเอกสารขัดกันให้ถือว่าเป็นบั๊กของ spec
 
@@ -182,7 +183,7 @@ ID ที่ไม่อยู่ในตารางเป็น illegal ท�
   - มี link register ตัวเดียว function ที่เรียก function อื่นต้องเก็บ `pc.link` ลง register หรือ MEM ก่อน แล้วเขียนคืนก่อน return (`pc.link` เขียนได้)
 - ข้อจำกัดจาก B1 (assembler ตรวจ): jump ที่ target มาจาก register ใช้ได้เฉพาะ `pc.link -> pc.t_jump` (return) และห้าม recursion
 - เวลา: taken ใช้ 1 + P cycle, not taken ใช้ 1 cycle, call เท่ากับ jump ที่ taken (timing_model R4)
-- target ที่เกินขนาดของ code memory เป็น illegal (cause 5)
+- target ที่เกินขนาดของ code memory เป็น illegal (cause 5) ตรวจเฉพาะเมื่อ jump นั้น taken ถ้า `t_jz`/`t_jnz` ไม่ taken จะไม่ trap เพราะไม่ได้ jump จริง
 
 ---
 

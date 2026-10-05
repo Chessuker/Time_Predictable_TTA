@@ -12,8 +12,8 @@ from .test_asm import EXAMPLE_1
 R = spec.R
 
 
-def run(src, max_cycles=1_000_000, stim=None):
-    prog = assemble(src, "t.tta")
+def run(src, max_cycles=1_000_000, stim=None, checks=True):
+    prog = assemble(src, "t.tta", checks=checks)
     sim = Simulator(prog.code, prog.data, stim, prog.imem_words, prog.dmem_words)
     return sim.run(max_cycles)
 
@@ -45,7 +45,7 @@ def test_example_1_straight_line():
 
 def test_reading_mul_out_one_cycle_early_is_a_program_error():
     with pytest.raises(SimError, match="R3"):
-        run("#2 -> mul.a\n#3 -> mul.t_b\nmul.out -> r1\n#0 -> trap.t_halt")
+        run("#2 -> mul.a\n#3 -> mul.t_b\nmul.out -> r1\n#0 -> trap.t_halt", checks=False)
 
 
 # ---------------------------------------------------------------- §5 example 2
@@ -201,7 +201,14 @@ def test_t_clear_must_run_before_the_deadline_cycle(nops, trapped):
 
 def test_t_advance_while_armed_is_a_program_error():
     with pytest.raises(SimError, match="armed"):
-        run("#0 -> tmr.t_sync\n#100 -> tmr.t_arm\n#10 -> tmr.t_advance\n#0 -> trap.t_halt")
+        run("#0 -> tmr.t_sync\n#100 -> tmr.t_arm\n#10 -> tmr.t_advance\n#0 -> trap.t_halt",
+            checks=False)
+
+
+def test_not_taken_jump_with_bad_target_does_not_trap():
+    r = run("#0 -> pc.cond\n.illegal 0x5380_1388\n.func h\n#0 -> trap.t_halt\n.endfunc",
+            checks=False)                             # #5000 -> pc.t_jnz, not taken
+    assert not records(r, "T")
 
 
 # ---------------------------------------------------------------- traps

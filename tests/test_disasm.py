@@ -17,7 +17,7 @@ again:  #work       -> pc.t_call
         #MIN        -> alu.op
         r1          -> pc.cond
         #top        -> pc.t_jnz
-        #on_trap    -> pc.t_jump
+        #0          -> trap.t_halt
 
 @loop_bound 2
 .func work
