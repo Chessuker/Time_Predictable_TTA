@@ -158,7 +158,7 @@ disassembler อ่าน `prog.code.hex` และ `prog.data.hex` แล้ว
 | round-trip | **รับประกัน** test ต้องใช้โหมดนี้ | **ไม่รับประกัน** มีไว้ให้คนอ่าน เพราะ assembler ต้องการ label เป็น target ของ jump และต้องรู้ขอบของ function |
 
 **นิยามของ round-trip test** (โหมดที่มี `prog.json`): assemble(`src`) ได้ `code.hex` และ `data.hex` จากนั้น disassemble ได้ `src'` แล้ว assemble(`src'`) ด้วยขนาด memory เดิมต้องได้ `.hex` ทั้งสองไฟล์ที่เหมือนเดิมทุก byte ทดสอบด้วยการเทียบ binary ไม่ได้เทียบข้อความ เพราะ source ต้นฉบับมี comment, `.equ` และการจัดรูปแบบที่ disassembler สร้างคืนไม่ได้ ส่วน `prog.json` ไม่ต้องเหมือนเดิม เพราะ symbol ของ `.equ` หายไป
-- listing (§4) ใช้ disassembler ตัวเดียวกันในการแสดงค่าที่ decode แล้ว
+- listing (§4) แสดง source ต้นฉบับพร้อมค่าที่ assembler คำนวณได้ ไม่ได้ใช้ disassembler เพราะ source มีข้อมูลครบกว่า (ชื่อ `.equ`, comment)
 
 ---
 
@@ -244,6 +244,13 @@ input จาก IO ต้องเหมือนกันทุก cycle ทั
 | เวลาที่ UART ใช้ส่ง 1 word | cycle (จำนวนเต็ม) | กำหนดตอน implement จาก baud divider ที่เป็นจำนวนเต็ม |
 
 ISS ต้องจำลอง FIFO ตามสองค่านี้ทุก cycle ไม่ใช่แค่นับ word ที่ push
+
+**พฤติกรรมของ FIFO ที่ ISS ใช้และ RTL ต้องทำให้ตรง** *(กำหนดตอนเขียน ISS 2026-10-05)*
+- ในแต่ละ cycle ฝั่ง UART ดึงก่อน แล้ว push ของ move ใน cycle นั้นจึงลงทีหลัง
+- word ที่ push ที่ cycle `p` เริ่มส่งได้เร็วที่สุดที่ `p + 1` และ**ออกจาก FIFO ตอนเริ่มส่ง** (ย้ายไปอยู่ใน shift register ของ UART) ไม่ใช่ตอนส่งเสร็จ
+- UART ส่ง word ละ `TELEM_CYCLES_PER_WORD` cycle ต่อกันโดยไม่มีช่องว่าง word ถัดไปเริ่มที่ `max(เวลาที่ word ก่อนหน้าส่งเสร็จ, เวลาที่ push + 1)`
+- push ที่เจอ FIFO มี word อยู่ครบ `TELEM_FIFO_WORDS` แล้วจะถูกทิ้ง และ `drops` เพิ่ม 1
+- ผลคือถ้า push ติดกันทุก cycle จะรับได้ `TELEM_FIFO_WORDS + 1` word ก่อนเริ่มทิ้ง (1 word อยู่ใน UART แล้ว)
 
 ---
 

@@ -422,14 +422,18 @@ def _pass2(st, filename, lines, imem_words, dmem_words):
                    st.symbols, functions, annotations, st.code, st.data)
 
 
-def _value_error(dst, value, ctx):
-    """Why an immediate value cannot go to dst in normal syntax, or None."""
+def value_error(dst, value, ctx):
+    """Why an immediate value cannot go to dst in normal syntax, or None.
+
+    ctx: code_len, dmem_words, func_starts. The disassembler passes
+    func_starts=None when it has no prog.json and cannot know the functions.
+    """
     name = dst.name
     if name in spec.JUMP_PORTS:
         if not 0 <= value < ctx["code_len"]:
             return f"jump target {value} is outside the program"
     elif name in ("pc.t_call", "trap.handler"):
-        if value not in ctx["func_starts"]:
+        if ctx["func_starts"] is not None and value not in ctx["func_starts"]:
             return f"{name} target {value} is not the start of a .func"
     elif name in spec.TMR_VALUE_PORTS:
         if not 0 <= value <= spec.TMR_IMM_MAX:
@@ -445,8 +449,11 @@ def _value_error(dst, value, ctx):
     return None
 
 
-def _port_src_error(src, dst, owner):
-    """Why a port-to-port move is not allowed in normal syntax, or None."""
+def port_src_error(src, dst, owner):
+    """Why a port-to-port move is not allowed in normal syntax, or None.
+
+    owner is the function name, "main", or None when unknown (no prog.json).
+    """
     if dst.name not in spec.CONTROL_PORTS:
         return None
     if src.name == "trap.epc":
@@ -458,7 +465,7 @@ def _port_src_error(src, dst, owner):
 
 def _encode_move(st, item, evaluate, ctx):
     if item.src is not None:
-        err = _port_src_error(item.src, item.dst, item.owner)
+        err = port_src_error(item.src, item.dst, item.owner)
         if err:
             _err(st, item.line, item.col, err)
             return
@@ -481,7 +488,7 @@ def _encode_move(st, item, evaluate, ctx):
     value = evaluate(node, item.line)
     if value is None:
         return
-    err = _value_error(item.dst, value, ctx)
+    err = value_error(item.dst, value, ctx)
     if err:
         _err(st, item.line, item.col, err)
         return
@@ -506,11 +513,11 @@ def _encode_illegal(st, item, evaluate, ctx):
     move = decode(value)
     dst = spec.PORT_BY_ID[move.dst]
     if move.imm:
-        normal_err = _value_error(dst, move.value, ctx)
+        normal_err = value_error(dst, move.value, ctx)
         text = f"#{move.value} -> {dst.name}"
     else:
         src = spec.PORT_BY_ID[move.src]
-        normal_err = _port_src_error(src, dst, item.owner)
+        normal_err = port_src_error(src, dst, item.owner)
         text = f"{src.name} -> {dst.name}"
     if normal_err is None:
         _err(st, item.line, item.col,
