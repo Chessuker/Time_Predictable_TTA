@@ -69,26 +69,47 @@ class Telemetry:
             self.drops = min(self.drops + 1, M32)
 
 
-class Stimulus:
-    """Input ports driven from prog.stim (toolchain_formats.md §6.4)."""
+class StimulusError(ValueError):
+    pass
 
-    def __init__(self, entries=()):
+
+class Stimulus:
+    """Input ports driven from prog.stim (toolchain_formats.md §6.4).
+
+    The file is part of the ISS <-> RTL contract, so malformed input is
+    rejected, never repaired: cycles of one port must strictly increase in file
+    order, and cycles cannot be negative.
+    """
+
+    def __init__(self, entries=(), where=None):
+        """entries: (cycle, port, value) in file order; where[i] names entry i in errors."""
         self._cycles, self._values = {}, {}
-        for cycle, port, value in sorted(entries, key=lambda e: (e[1], e[0])):
-            self._cycles.setdefault(port, []).append(cycle)
+        for i, (cycle, port, value) in enumerate(entries):
+            at = where[i] if where else f"stim entry {i + 1}"
+            if cycle < 0:
+                raise StimulusError(f"{at}: negative cycle {cycle}")
+            cycles = self._cycles.setdefault(port, [])
+            if cycles and cycle <= cycles[-1]:
+                raise StimulusError(f"{at}: {port} cycle {cycle} is not after "
+                                    f"the previous {port} cycle {cycles[-1]}")
+            cycles.append(cycle)
             self._values.setdefault(port, []).append(value)
 
     @classmethod
     def parse(cls, text):
-        entries = []
+        entries, where = [], []
         for n, line in enumerate(text.splitlines(), 1):
             if not line.strip():
                 continue
             parts = line.split()
             if len(parts) != 3 or parts[1] not in P or not P[parts[1]].readable:
-                raise ValueError(f"stim line {n}: expected '<cycle> <input port> <value>'")
-            entries.append((int(parts[0]), parts[1], int(parts[2])))
-        return cls(entries)
+                raise StimulusError(f"stim line {n}: expected '<cycle> <input port> <value>'")
+            try:
+                entries.append((int(parts[0]), parts[1], int(parts[2])))
+            except ValueError:
+                raise StimulusError(f"stim line {n}: cycle and value must be decimal integers") from None
+            where.append(f"stim line {n}")
+        return cls(entries, where)
 
     def value(self, port, c):
         cycles = self._cycles.get(port)

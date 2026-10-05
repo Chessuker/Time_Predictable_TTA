@@ -5,7 +5,8 @@ import pytest
 
 from host.asm import assemble, output_files
 from host.common import spec
-from host.iss import ImageError, SimError, Simulator, Stimulus, load
+from host.iss import (ImageError, SimError, Simulator, Stimulus, StimulusError,
+                      check_invariants, load)
 
 from .test_asm import EXAMPLE_1
 
@@ -327,6 +328,40 @@ def test_stimulus_drives_io_encoder():
     stim = Stimulus.parse("0 io.encoder 5\n4 io.encoder -3\n")
     r = run("io.encoder -> r1\nio.encoder -> r2\nio.encoder -> r3\n#0 -> trap.t_halt", stim=stim)
     assert r.sim.regs[1:4] == [5, 5, (-3) & 0xFFFFFFFF]
+
+
+@pytest.mark.parametrize("text, fragment", [
+    ("100 io.encoder 1\n50 io.encoder 2\n", "stim line 2: io.encoder cycle 50 is not after"),
+    ("100 io.encoder 1\n100 io.encoder 2\n", "stim line 2: io.encoder cycle 100 is not after"),
+    ("-1 io.encoder 1\n", "stim line 1: negative cycle"),
+    ("0 io.pwm_cmd 1\n", "stim line 1: expected"),          # not an input port
+    ("0 io.encoder 0x10\n", "decimal integers"),
+])
+def test_malformed_stimulus_is_rejected(text, fragment):
+    with pytest.raises(StimulusError, match=fragment):
+        Stimulus.parse(text)
+
+
+def _image():
+    prog = assemble(EXAMPLE_1, "p.tta")
+    return list(prog.code), list(prog.data), json.loads(output_files(prog)[".json"])
+
+
+@pytest.mark.parametrize("damage, fragment", [
+    (lambda c, d, m: m.update(code_len=5000), "code_len 5000"),
+    (lambda c, d, m: m.update(data_len=-1), "data_len -1"),
+    (lambda c, d, m: c.__setitem__(20, 1), "non-zero code word after"),
+    (lambda c, d, m: d.__setitem__(0, 1), "non-zero data word after"),
+    (lambda c, d, m: c.__setitem__(3, 0), "zero code word before"),
+    (lambda c, d, m: m["functions"][0].update(end=99), "function main"),
+    (lambda c, d, m: m["functions"].append({"name": "x", "start": 2, "end": 3}), "function x"),
+])
+def test_damaged_images_are_refused(damage, fragment):
+    code, data, meta = _image()
+    check_invariants(code, data, meta)                      # the clean image passes
+    damage(code, data, meta)
+    with pytest.raises(ImageError, match=fragment):
+        check_invariants(code, data, meta)
 
 
 def test_max_cycles_ends_with_E():

@@ -1,8 +1,20 @@
 """Instruction-level control-flow graph per function.
 
-Shared by the assembler's static checks (S1, S3, S4, S5) and, later, the WCET
-tool. Each node is one code word. Edges carry the minimum number of cycles
-from the start of this move to the start of the next one (timing_model.md).
+This is a STRUCTURAL, MINIMUM-LATENCY CFG. Each node is one code word and each
+edge carries a lower bound on the cycles from the start of one move to the
+start of the next. That is what the Phase 1 static checks need (S1 asks "can
+this read come too early?"), and it is NOT a timing model of the program:
+
+- An `after_call` edge (call site -> the move after it) costs
+  CALL_RETURN_MIN_CYCLES, which leaves out the callee's own execution time.
+  An interprocedural WCET analysis must add the callee's WCET separately.
+- The edge out of t_advance / t_wait costs 1 (the late case). The stall is not
+  on the edge; the WCET method splits the program at these sync points instead
+  (B3, timing_model.md §3).
+- Traps are not edges. The trap handler is analysed as its own function.
+
+The WCET tool (Phase 4) may reuse the graph structure, but must not sum these
+edge costs as if they were execution times.
 """
 from dataclasses import dataclass, field
 
@@ -10,14 +22,15 @@ from . import spec
 from .encoding import decode, illegal_reason
 
 # Lower bound on cycles from a call to the move after it: the call itself,
-# P bubbles, at least one callee move (the return), P more bubbles.
+# P bubbles, at least one callee move (the return), P more bubbles. A lower
+# bound only: the callee's real execution time is not included.
 CALL_RETURN_MIN_CYCLES = (1 + spec.P) + (1 + spec.P)
 
 
 @dataclass
 class Edge:
     to: int
-    cycles: int              # minimum cycles between the two moves
+    cycles: int              # LOWER BOUND on cycles between the two moves, not a cost
     kind: str                # seq | taken | not_taken | after_call
 
 

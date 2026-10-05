@@ -29,6 +29,34 @@ def load(stem):
         raise ImageError(f"{stem}.json: built for spec {meta.get('spec')!r}, "
                          f"this ISS implements {spec.SPEC_ID!r}")
     code, data = _hex(stem + ".code.hex"), _hex(stem + ".data.hex")
-    if len(code) != meta["imem_words"] or len(data) != meta["dmem_words"]:
-        raise ImageError(f"{stem}: hex length does not match imem_words/dmem_words")
+    check_invariants(code, data, meta, stem)
     return code, data, meta
+
+
+def check_invariants(code, data, meta, where="image"):
+    """Contract between tools (toolchain_formats.md §3). The assembler already
+    guarantees these; checking again here stops a hand-edited or damaged image
+    from entering the ISS."""
+    def fail(msg):
+        raise ImageError(f"{where}: {msg}")
+
+    imem, dmem = meta["imem_words"], meta["dmem_words"]
+    code_len, data_len = meta["code_len"], meta["data_len"]
+    if len(code) != imem or len(data) != dmem:
+        fail("hex length does not match imem_words/dmem_words")
+    if not 0 <= code_len <= imem:
+        fail(f"code_len {code_len} is outside 0..{imem}")
+    if not 0 <= data_len <= dmem:
+        fail(f"data_len {data_len} is outside 0..{dmem}")
+    if any(code[code_len:]):
+        fail(f"non-zero code word after code_len {code_len}")
+    if any(data[data_len:]):
+        fail(f"non-zero data word after data_len {data_len}")
+    if not all(code[:code_len]):
+        fail(f"zero code word before code_len {code_len}")
+    prev_end = -1
+    for f in meta["functions"]:
+        if not prev_end < f["start"] <= f["end"] < code_len:
+            fail(f"function {f['name']} {f['start']}..{f['end']} is out of order, "
+                 f"overlaps, or lies outside code_len {code_len}")
+        prev_end = f["end"]

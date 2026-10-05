@@ -1,4 +1,5 @@
-from .image import ImageError, load
-from .sim import Result, SimError, Simulator, Stimulus
+from .image import ImageError, check_invariants, load
+from .sim import Result, SimError, Simulator, Stimulus, StimulusError
 
-__all__ = ["ImageError", "Result", "SimError", "Simulator", "Stimulus", "load"]
+__all__ = ["ImageError", "Result", "SimError", "Simulator", "Stimulus", "StimulusError",
+           "check_invariants", "load"]
