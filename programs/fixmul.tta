@@ -1,0 +1,46 @@
+; Fixed-point multiply as the controller does it (host/plant_model):
+;   out[i] = (K * in[i] + 2^15) >> 16      K = KPQ in Q.16, round half up
+;
+; MUL has L = 2: the trigger and the read of mul.out need one move between
+; them, filled here with the ALU opcode write.
+;
+; Cycle count (first move at cycle R = 2):
+;   setup 4 moves, loop body 22 moves, COUNT - 1 taken jumps, then halt.
+;   halt cycle = 2 + 4 + 24(COUNT - 1) + 22 = 24 COUNT + 4   (COUNT = 4 -> 100)
+
+.equ K,     186_659
+.equ HALF,  1 << 15
+.equ COUNT, 4
+
+        #K          -> mul.a
+        #ins        -> r1
+        #outs       -> r2
+        #COUNT      -> r3
+@loop_bound COUNT
+loop:   r1          -> mem.t_load
+        mem.data_out -> mul.t_b     ; K * e
+        #ADD        -> alu.op       ; fills the MUL latency slot
+        mul.out     -> alu.a
+        #HALF       -> alu.t_b
+        #SRA        -> alu.op
+        alu.out     -> alu.a
+        #16         -> alu.t_b
+        alu.out     -> mem.data_in
+        r2          -> mem.t_store
+        #ADD        -> alu.op
+        r1          -> alu.a
+        #1          -> alu.t_b
+        alu.out     -> r1
+        r2          -> alu.a
+        #1          -> alu.t_b
+        alu.out     -> r2
+        r3          -> alu.a
+        #-1         -> alu.t_b
+        alu.out     -> r3
+        r3          -> pc.cond
+        #loop       -> pc.t_jnz
+        #0          -> trap.t_halt
+
+        .data
+ins:    .word 100, -100, 4096, -4096
+outs:   .space 4

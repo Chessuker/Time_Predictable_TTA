@@ -1,0 +1,35 @@
+; Nested call and return with one link register.
+;   spo(x) = square(x) + 1; spo saves pc.link before calling square.
+;   r10 = spo(3) = 10, r11 = spo(-5) = 26
+;
+; Cycle count (first move at cycle R = 2):
+;   a call or return is a taken jump: 1 + P cycles before the next move.
+;   call at 3 -> spo at 6, call at 7 -> square at 10..14, return -> spo at 17..22,
+;   return -> main at 25. The second call at 27 returns at 49, halt at 50.
+
+        #3          -> r1
+        #spo        -> pc.t_call
+        r2          -> r10
+        #-5         -> r1
+        #spo        -> pc.t_call
+        r2          -> r11
+        #0          -> trap.t_halt
+
+.func spo
+        pc.link     -> r15          ; save the return address
+        #square     -> pc.t_call
+        #ADD        -> alu.op
+        r2          -> alu.a
+        #1          -> alu.t_b
+        alu.out     -> r2
+        r15         -> pc.link      ; restore it
+        pc.link     -> pc.t_jump
+.endfunc
+
+.func square
+        r1          -> mul.a
+        r1          -> mul.t_b
+        nop                         ; MUL latency 2
+        mul.out     -> r2
+        pc.link     -> pc.t_jump
+.endfunc

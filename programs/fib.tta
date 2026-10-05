@@ -1,0 +1,29 @@
+; Fibonacci: fib(N) by iteration, result in r1 and in data word 'result'.
+;
+; Cycle count (first move at cycle R = 2):
+;   setup 4 moves, loop body 9 moves, N - 1 taken back jumps (+P each),
+;   then 3 moves to store and halt.
+;   halt cycle = 2 + 4 + 11(N - 1) + 9 + 2 = 11N + 6        (N = 20 -> 226)
+
+.equ N, 20
+
+        #0          -> r1           ; a = fib(0)
+        #1          -> r2           ; b = fib(1)
+        #N          -> r4           ; iterations left
+        #ADD        -> alu.op
+@loop_bound N
+loop:   r1          -> alu.a
+        r2          -> alu.t_b      ; a + b
+        r2          -> r1           ; a = b
+        alu.out     -> r2           ; b = a + b
+        r4          -> alu.a
+        #-1         -> alu.t_b
+        alu.out     -> r4           ; one iteration done
+        r4          -> pc.cond
+        #loop       -> pc.t_jnz
+        r1          -> mem.data_in
+        #result     -> mem.t_store
+        #0          -> trap.t_halt
+
+        .data
+result: .word 0
