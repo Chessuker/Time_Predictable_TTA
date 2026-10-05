@@ -4,6 +4,10 @@
 
 **การแก้หลัง freeze:** ห้ามแก้เงียบ ๆ ทุกการเปลี่ยนต้องแก้ timing_model.md กับ isa.md ให้ตรงกันใน commit เดียว ระบุเหตุผลและวันที่ไว้ที่จุดที่แก้ และ ISS, assembler, WCET tool และ RTL ต้องอัปเดตตาม
 
+**บันทึกการแก้หลัง freeze**
+- 2026-10-02: ตัวอย่างโค้ดใช้ `#label` สำหรับ label ที่ใช้เป็นค่า ตาม [asm_syntax.md](asm_syntax.md) แก้เฉพาะ syntax ของตัวอย่าง ไม่เปลี่ยน semantics หรือตัวเลข cycle
+- 2026-10-05: §1 เรื่อง trace เพิ่มว่า trap และ halt มี record ของตัวเอง และย้ายรูปแบบเต็มไปไว้ที่ toolchain_formats.md §6 ไม่เปลี่ยน semantics
+
 เอกสารนี้คือสัญญาด้านเวลาที่ assembler, ISS, WCET tool และ RTL ต้องทำตามตรงกันทุก cycle ถ้า RTL ทำตามไม่ได้ ให้กลับมาแก้เอกสารนี้ก่อน ห้ามแก้ ISS ให้ตรงกับ RTL เงียบ ๆ
 
 ที่มาของ decision แต่ละข้อ (A1–A6, B1–B4, P) อยู่ใน [reading_notes_tier1.md](reading_notes_tier1.md) ส่วน "Decision ที่กระทบ Phase 0"
@@ -29,7 +33,7 @@ spec ในเอกสารนี้ต้องไม่ผูกกับ pr
 - "move `m` execute ที่ cycle `c`" หมายถึงค่าของ src ถูกอ่านและเขียนลง dst ใน cycle `c`
 - move อ่านค่าของ state ณ ต้น cycle `c` และผลที่เขียนมองเห็นได้ตั้งแต่ cycle `c + 1`
 - แต่ละ cycle มี move execute ได้มากที่สุด 1 ตัว cycle ที่ไม่มี move execute เรียกว่า bubble (มาจาก jump penalty, stall ของ timing move หรือ trap entry)
-- trace ของ ISS และ RTL มี 1 แถวต่อ move ที่ execute จริง (`cycle, pc, src, dst, value`) bubble และ move ที่ถูก squash ไม่มีแถว
+- trace ของ ISS และ RTL มี 1 record ต่อ move ที่ execute จริง bubble และ move ที่ถูก squash ไม่มี record ของ move แต่ trap และ halt มี record ของตัวเอง รูปแบบเต็มอยู่ใน [toolchain_formats.md](toolchain_formats.md) §6
 
 ### ค่าคงที่
 
@@ -235,7 +239,7 @@ loop:   r1          -> alu.a         ; a
         #1          -> alu.t_b       ; a+1  trigger
         alu.out     -> r1            ; a+2
         r1          -> pc.cond       ; a+3
-        loop        -> pc.t_jnz      ; a+4  taken ถ้า r1 != 0
+        #loop       -> pc.t_jnz      ; a+4  taken ถ้า r1 != 0
 after:  ...
 ```
 
@@ -258,9 +262,9 @@ after:  ...
 
 ```asm
         r1          -> pc.cond       ; 0
-        else        -> pc.t_jz       ; 1  taken ถ้า r1 == 0
+        #else       -> pc.t_jz       ; 1  taken ถ้า r1 == 0
         #10         -> r2            ; then
-        join        -> pc.t_jump     ; taken เสมอ
+        #join       -> pc.t_jump     ; taken เสมอ
 else:   #20         -> r2
 join:   ...
 ```
@@ -286,7 +290,7 @@ loop:   #100000     -> tmr.t_advance         ; anchor += period, stall
         r5          -> io.pwm_cmd            ; actuate
         #0          -> tmr.t_clear
         ...                                  ; telemetry 6 move
-        loop        -> pc.t_jump
+        #loop       -> pc.t_jump
 ```
 
 **Budget**
@@ -308,7 +312,7 @@ loop:   #100000     -> tmr.t_advance         ; anchor += period, stall
 | A + 1001 | `r5 -> io.pwm_cmd` (actuate) |
 | A + 1002 | `t_clear` (≤ A + 1999 ✓) |
 | A + 1003 … A + 1008 | telemetry |
-| A + 1009 | `loop -> pc.t_jump` |
+| A + 1009 | `#loop -> pc.t_jump` |
 | A + 1010 … A + 1011 | bubble |
 | A + 1012 | `t_advance` target A + 100000 → มาทัน, stall ถึง A + 100000 |
 | A + 100001 | ตื่นรอบถัดไป, sense |
