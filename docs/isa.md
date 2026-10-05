@@ -2,6 +2,10 @@
 
 สถานะ: **FROZEN — Phase 0** (2026-10-02) ผ่าน review แล้ว ใช้เป็นสัญญาของ Phase 1 เป็นต้นไป การแก้หลัง freeze ใช้กติกาเดียวกับ [timing_model.md](timing_model.md) ข้อเสนอระหว่างร่างทุกข้อได้รับการยืนยันแล้ว รายการอยู่ใน §12
 
+**บันทึกการแก้หลัง freeze**
+- 2026-10-02: ตัวอย่างโค้ดใช้ `#label` สำหรับ label ที่ใช้เป็นค่า ตาม [asm_syntax.md](asm_syntax.md) แก้เฉพาะ syntax ของตัวอย่าง ไม่เปลี่ยน semantics
+- 2026-10-05: §6 ระบุว่า cause 5 ตรวจเฉพาะ jump ที่ taken เป็นการระบุกรณีที่เดิมไม่ได้เขียนไว้ ไม่ขัดกับความหมายเดิม จึงไม่เปลี่ยน `SPEC_ID`
+
 เอกสารนี้กำหนดสิ่งที่ software มองเห็น ได้แก่ encoding, port และ semantics ส่วนเวลาของทุกอย่างอยู่ใน [timing_model.md](timing_model.md) ซึ่งถือเป็นสัญญาเดียวกัน ถ้าสองเอกสารขัดกันให้ถือว่าเป็นบั๊กของ spec
 
 spec นี้ไม่ผูกกับ primitive ของ vendor ใด อะไรที่เป็นเรื่องของ FPGA เขียนเป็นหมายเหตุของ implementation เท่านั้น
@@ -174,12 +178,12 @@ ID ที่ไม่อยู่ในตารางเป็น illegal ท�
 - ทุก jump ใช้ **absolute word address** จากค่าที่เขียนลง trigger port (immediate จาก label หรือค่าจาก register)
 - `pc.t_jz` / `pc.t_jnz` ทดสอบ `pc.cond` ทั้ง 32 bit ใช้นับ loop ด้วย register ได้โดยตรง
 - **call/return**
-  - `target -> pc.t_call` ตั้ง `pc.link ← address ของ move ถัดจาก call` แล้ว jump
+  - `#target -> pc.t_call` ตั้ง `pc.link ← address ของ move ถัดจาก call` แล้ว jump
   - return คือ `pc.link -> pc.t_jump`
   - มี link register ตัวเดียว function ที่เรียก function อื่นต้องเก็บ `pc.link` ลง register หรือ MEM ก่อน แล้วเขียนคืนก่อน return (`pc.link` เขียนได้)
 - ข้อจำกัดจาก B1 (assembler ตรวจ): jump ที่ target มาจาก register ใช้ได้เฉพาะ `pc.link -> pc.t_jump` (return) และห้าม recursion
 - เวลา: taken ใช้ 1 + P cycle, not taken ใช้ 1 cycle, call เท่ากับ jump ที่ taken (timing_model R4)
-- target ที่เกินขนาดของ code memory เป็น illegal (cause 5)
+- target ที่เกินขนาดของ code memory เป็น illegal (cause 5) ตรวจเฉพาะเมื่อ jump นั้น taken ถ้า `t_jz`/`t_jnz` ไม่ taken จะไม่ trap เพราะไม่ได้ jump จริง
 
 ---
 

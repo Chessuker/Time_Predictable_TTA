@@ -30,3 +30,6 @@ __pycache__/
 
 # generated plots
 host/plant_model/out/
+
+# assembler output (default -o)
+build/

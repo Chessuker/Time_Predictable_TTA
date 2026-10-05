@@ -1,0 +1,52 @@
+; Bubble sort of N signed words in place, without branches on the data.
+;
+; Each compare-exchange writes MIN(x, y) then MAX(x, y), so every input takes
+; exactly the same path and the same number of cycles. Only the loop counters
+; branch. This is the style that keeps WCET tight (no infeasible paths, B4).
+;
+; Cycle count (first move at cycle R = 2):
+;   inner loop per entry  = 25(N - 2) + 23     (23 moves, N - 2 taken jumps)
+;   outer body            = 2 + inner + 5
+;   halt cycle            = 2 + 2 + (N - 1)(outer body) + 2(N - 2)
+;   N = 8 -> 1276
+
+.equ N, 8
+
+        #N - 1      -> r3           ; passes left
+        #ADD        -> alu.op
+@loop_bound N - 1
+outer:  #arr        -> r1           ; r1 = &arr[j]
+        #N - 1      -> r2           ; compare-exchanges left in this pass
+@loop_bound N - 1
+inner:  r1          -> mem.t_load
+        mem.data_out -> r4          ; x = arr[j]
+        r1          -> alu.a
+        #1          -> alu.t_b
+        alu.out     -> r6           ; r6 = j + 1
+        r6          -> mem.t_load
+        mem.data_out -> r5          ; y = arr[j + 1]
+        r4          -> alu.a
+        #MIN        -> alu.op
+        r5          -> alu.t_b
+        alu.out     -> mem.data_in
+        r1          -> mem.t_store  ; arr[j] = min(x, y)
+        #MAX        -> alu.op
+        r5          -> alu.t_b
+        alu.out     -> mem.data_in
+        r6          -> mem.t_store  ; arr[j + 1] = max(x, y)
+        r6          -> r1
+        #ADD        -> alu.op
+        r2          -> alu.a
+        #-1         -> alu.t_b
+        alu.out     -> r2
+        r2          -> pc.cond
+        #inner      -> pc.t_jnz
+        r3          -> alu.a
+        #-1         -> alu.t_b
+        alu.out     -> r3
+        r3          -> pc.cond
+        #outer      -> pc.t_jnz
+        #0          -> trap.t_halt
+
+        .data
+arr:    .word 5, -3, 9, 0, 12, -7, 3, 1
