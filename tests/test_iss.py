@@ -317,6 +317,18 @@ def test_call_and_return():
     assert [m[0] for m in calls] == [R, R + 3, R + 4, R + 7, R + 8]
 
 
+def test_call_return_min_cycles_is_the_true_lower_bound():
+    """The shortest callee is a single move (the return itself), so the move
+    after a call can start 2(1 + P) cycles after it, not 2(1 + P) + 1.
+    cfg.CALL_RETURN_MIN_CYCLES must equal this; a larger value would make S1
+    accept reads that come too early."""
+    from host.common.cfg import CALL_RETURN_MIN_CYCLES
+    r = run("#f -> pc.t_call\n#1 -> r1\n#0 -> trap.t_halt\n.func f\npc.link -> pc.t_jump\n.endfunc")
+    call, ret, after = [m[0] for m in moves(r)][:3]
+    assert (ret - call, after - ret) == (1 + spec.P, 1 + spec.P)
+    assert after - call == CALL_RETURN_MIN_CYCLES == 2 * (1 + spec.P)
+
+
 def test_telemetry_drops_are_deterministic():
     src = "".join(f"#{i} -> telem.t_push\n" for i in range(70))
     r = run(src + "telem.drops -> r2\n#0 -> trap.t_halt")
