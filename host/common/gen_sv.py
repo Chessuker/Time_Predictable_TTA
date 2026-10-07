@@ -1,4 +1,4 @@
-"""Generate rtl/common/tta_pkg.sv from spec.py so RTL never retypes a number.
+"""Generate tta_pkg.sv (in the Vivado project sources) from spec.py so RTL never retypes a number.
 
     py -m host.common.gen_sv            write the file
     py -m host.common.gen_sv --check    exit 1 if the committed file is stale
@@ -13,7 +13,8 @@ from pathlib import Path
 
 from . import spec
 
-OUT = Path(__file__).resolve().parents[2] / "rtl" / "common" / "tta_pkg.sv"
+OUT = (Path(__file__).resolve().parents[2] / "Time_Predictable_TTA.srcs" / "sources_1" / "new"
+       / "tta_pkg.sv")
 
 
 def sv_name(port_name):

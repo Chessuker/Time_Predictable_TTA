@@ -4,7 +4,7 @@ from host.common import gen_sv, spec
 def test_committed_package_is_up_to_date():
     assert gen_sv.OUT.exists(), "run: py -m host.common.gen_sv"
     assert gen_sv.OUT.read_text(encoding="utf-8") == gen_sv.generate(), \
-        "rtl/common/tta_pkg.sv is stale; run: py -m host.common.gen_sv"
+        f"{gen_sv.OUT.name} is stale; run: py -m host.common.gen_sv"
 
 
 def test_generation_is_deterministic():

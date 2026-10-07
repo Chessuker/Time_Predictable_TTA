@@ -20,16 +20,15 @@ BINARY = OBJ / "Vtb_tta"
 DISTRO = "Ubuntu-24.04"
 ENV = "source ~/oss-cad-suite/environment >/dev/null 2>&1"
 
-RTL_SOURCES = [
-    "rtl/common/tta_pkg.sv",
-    "rtl/common/tta_sram_1r1w.sv",
-    "rtl/fu/fu_alu.sv",
-    "rtl/fu/fu_mul.sv",
-    "rtl/fu/fu_tmr.sv",
-    "rtl/fu/fu_telem.sv",
-    "rtl/core/tta_core.sv",
-    "tb/tb_tta.sv",
-]
+# HDL lives in the Vivado project's own layout (Time_Predictable_TTA.srcs).
+SRCS = "Time_Predictable_TTA.srcs"
+DESIGN_DIR = f"{SRCS}/sources_1/new"
+SIM_DIR = f"{SRCS}/sim_1/new"
+CORE_SOURCES = [f"{DESIGN_DIR}/{f}" for f in (
+    "tta_pkg.sv", "tta_sram_1r1w.sv", "fu_alu.sv", "fu_mul.sv", "fu_tmr.sv", "fu_telem.sv",
+    "tta_core.sv")]
+BOARD_SOURCES = CORE_SOURCES + [f"{DESIGN_DIR}/uart_tx_word.sv", f"{DESIGN_DIR}/arty_tta_top.sv"]
+RTL_SOURCES = CORE_SOURCES + [f"{SIM_DIR}/tb_tta.sv"]
 
 
 class LockstepError(RuntimeError):
@@ -57,7 +56,7 @@ def build(force=False):
     cmd = " ".join([
         "cd", shlex.quote(wsl_path(ROOT)), "&&",
         "verilator --binary --timing --timescale 1ns/1ps -j 0 -Wall -Wno-fatal +define+TTA_SIM",
-        "--top-module tb_tta -Irtl/common",
+        f"--top-module tb_tta -I{DESIGN_DIR}",
         "--Mdir", shlex.quote(wsl_path(OBJ)), "-o Vtb_tta",
         *RTL_SOURCES,
     ])
