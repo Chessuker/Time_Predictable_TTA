@@ -1,3 +1,24 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/06/2026 07:10:03 PM
+// Design Name: 
+// Module Name: fu_alu.sv
+// Project Name: Time_Predictable_TTA
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
 // ALU datapath (isa.md sec. 4). Combinational; the core registers the result,
 // which gives latency L = 1. op is always a legal opcode: an illegal write to
 // alu.op traps and never reaches the op register.

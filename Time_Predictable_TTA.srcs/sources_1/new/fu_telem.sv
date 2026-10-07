@@ -1,3 +1,24 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/06/2026 07:14:01 PM
+// Design Name: 
+// Module Name: fu_telem.sv
+// Project Name: Time_Predictable_TTA
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
 // Telemetry FIFO + UART pacing (isa.md sec. 3, toolchain_formats.md sec. 6.5).
 //
 // Matches the ISS model exactly, because telem.drops is software-visible:

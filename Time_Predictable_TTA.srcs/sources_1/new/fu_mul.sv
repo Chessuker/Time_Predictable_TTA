@@ -1,3 +1,24 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/06/2026 07:12:13 PM
+// Design Name: 
+// Module Name: fu_mul.sv
+// Project Name: Time_Predictable_TTA
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
 // MUL: signed 32 x 32, low 32 bits (isa.md, timing_model.md sec. 7), L = 2.
 //
 // The trigger cycle c captures both operands; the product registers at the

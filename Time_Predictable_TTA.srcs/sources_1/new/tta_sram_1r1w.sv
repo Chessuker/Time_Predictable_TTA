@@ -1,3 +1,24 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/06/2026 07:20:30 PM
+// Design Name: 
+// Module Name: tta_sram_1r1w.sv
+// Project Name: Time_Predictable_TTA
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
 // Synchronous SRAM, one read port and one write port, written so any tool
 // infers its own memory (FPGA block RAM or an ASIC macro). No vendor primitive.
 //
@@ -7,7 +28,9 @@
 module tta_sram_1r1w #(
   parameter int    WORDS       = 4096,
   parameter string INIT_FILE   = "",   // $readmemh image for synthesis/simulation
+  /* verilator lint_off UNUSEDPARAM */  // only read when TTA_SIM is defined
   parameter string SIM_PLUSARG = ""    // simulation only: +<name>=<file> overrides INIT_FILE
+  /* verilator lint_on UNUSEDPARAM */
 ) (
   input  logic                     clk,
   input  logic                     rst,      // clears rdata only (spec: readable state is 0 after reset)
