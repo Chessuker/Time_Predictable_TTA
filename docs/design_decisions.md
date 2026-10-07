@@ -38,6 +38,71 @@
 
 ---
 
+## Timing closure ที่ 100 MHz และการคงไว้ที่ 100 MHz *(จดไว้ 2026-10-07)*
+
+**ผลสุดท้าย:** Arty A7-100T (`xc7a100tcsg324-1`) ผ่าน timing ที่ 100 MHz ด้วย WNS = +0.185 ns, WHS = +0.034 ns path ที่ช้าที่สุดยาว 9.8 ns Fmax ของ core จึงอยู่ราว 102 MHz
+
+**หลักที่ใช้ทุกรอบ:** แก้แค่**วิธีสร้างวงจร** ห้ามเปลี่ยนพฤติกรรม หลังแก้แต่ละรอบรัน lockstep ทั้ง 41 กรณี (`tests/test_lockstep.py`) และ RTL ต้องตรงกับ ISS ทุก record ทุก cycle ทั้ง 3 รอบไม่มีตัวเลขใน spec เปลี่ยนเลย
+
+ทุก path ที่ยาวเริ่มที่ src mux เหมือนกัน เพราะ X stage ต้องเลือก source → ได้ค่าบน bus → ใช้ค่าในปลายทาง ให้เสร็จใน cycle เดียว (กฎ R2: เขียนที่ `c` อ่านได้ที่ `c + 1`) ทั้งสามรอบต่างกันแค่ว่าค่าบน bus ถูกส่งไปทำอะไรต่อ
+
+| รอบ | WNS | path ที่ช้าที่สุด | ชั้นของ logic |
+|---|---|---|---|
+| 1 | −4.830 ns | `x_src` → src mux → `bad_alu_op` → `trap` → `exec` → `do_sync` → `anchor_n` → ลบ 64 bit → saturate → `u_tmr/elapsed` | 26 |
+| 2 | −0.572 ns | `x_src` → src mux → ALU → `alu_out` และ `x_src` → src mux → jump → `flush` → enable ของ code SRAM | 13–15 |
+| 3 | **+0.185 ns** | `x_src` → src mux → ALU → `alu_out` (เหลือเวลาพอ) | 9–10 |
+
+### รอบ 1 → 2: สาเหตุ 2 ข้อ
+
+**(ก) trap ที่ตัดสินจากค่าบน bus ไปหน่วง enable ของทุก FU**
+- ต้นเหตุ: trap บางแบบรู้ได้หลังเห็นค่าบน bus แล้วเท่านั้น (เขียนค่าเกิน 9 ลง `alu.op`, address ของ load/store เกินขนาด, target ของ jump ที่ taken เกินขนาด) แต่ทุก FU ใช้ `exec` ตัวเดียวกันที่ต้องรอผลเช็คนี้ Vivado ไม่รู้ว่าการเช็คแต่ละแบบเกิดได้กับ dst ของตัวเองเท่านั้น จึงเอาไปต่อหน้า enable ของทุก FU (fanout 171)
+- แก้: เพิ่ม `exec_base = exec_ok && !trap_dl && !x_illegal` ซึ่งไม่รอค่าบน bus ให้ FU ทั่วไปใช้ ส่วน `alu.op`, `mem.t_load`/`t_store` และ jump ยังรอผลเช็คของตัวเองเหมือนเดิม (`tta_core.sv`)
+
+**(ข) Timing Unit คำนวณ 64 bit ต่อกันหลายชั้นใน cycle เดียว**
+- ต้นเหตุ: `fu_tmr` เดิมเก็บเวลาแบบ absolute ตาม spec (`anchor`, `deadline`, target) ทำให้ใน cycle เดียวต้องบวก `anchor + v` แบบ 64 bit, ลบ `now + 1 − anchor` แบบ 64 bit แล้ว saturate ทั้งหมดต่อจาก src mux
+- แก้: เก็บ**ระยะห่าง**แทน timestamp คือ `el = now − anchor` (64 bit), `wrem = target − now` ระหว่าง stall และ `rem = deadline − now` ขณะ armed แล้วแปลงเงื่อนไขของ spec ให้เป็นการเทียบกับ `el` ครั้งเดียว:
+  - stall เมื่อ `n + 1 ≤ anchor + v` เทียบเท่ากับ `el < v`
+  - late เมื่อ `n > anchor + v` เทียบเท่ากับ `el > v`
+  - deadline trap ที่ `n + 1` เมื่อ `anchor + v ≤ n + 1` เทียบเท่ากับ `v ≤ el + 1`
+
+  ทุกการตัดสินบน path ของค่าบน bus เหลือการเทียบ 32 bit ครั้งเดียว (`fu_tmr.sv`) การแปลงนี้ถูกต้องเพราะ `el ≥ 0` ทุกครั้งที่มี move execute (`el` ติดลบได้เฉพาะระหว่าง stall ของ `t_advance` ซึ่ง B1 กัน trap ไว้แล้ว) และใช้ 64 bit เต็มเพื่อให้เทียบเท่า spec ทุกกรณีภายใต้สมมติฐาน R7
+- **ต้องพิสูจน์ใน Phase 3:** formal ต้องแสดงว่าแบบระยะห่างนี้เทียบเท่ากับ spec ที่เขียนเป็นเวลา absolute เช่น trap เกิดที่ `now == deadline` พอดี
+
+### รอบ 2 → 3: สาเหตุ 2 ข้อ
+
+**(ค) ถอดรหัส src ช้าเกินไป**
+- ต้นเหตุ: X stage ต้องเอา port ID 8 bit มาถอดรหัสก่อนจึงรู้ว่าจะเลือก source ตัวไหน เสีย LUT ไป 2–3 ชั้นก่อนได้ค่าบน bus
+- แก้: ถอดรหัสไว้ล่วงหน้าตั้งแต่ D stage เก็บเป็น one-hot select (`x_sel`) ใน register แล้วใน X เหลือแค่ AND-OR การแก้นี้ทำให้ทุก path ที่ผ่าน src mux เร็วขึ้นพร้อมกัน ไม่ใช่แค่ ALU
+
+**(ง) enable ของ code SRAM รอผลของ jump**
+- ต้นเหตุ: เดิมใช้ `re = advance && !flush` ซึ่งต้องรู้ก่อนว่า jump taken หรือไม่ (ต้องดูค่าบน bus)
+- แก้: ใช้ `re = advance` อ่านทุกครั้งที่ pipeline เดิน ถ้าเกิด jump word ที่อ่านมาจะถูกทิ้งด้วย `ir_valid` อยู่แล้ว การอ่านเกินมา 1 word จึงไม่มีผลอะไร
+
+### ข้อควรระวังต่อจากนี้
+- **เหลือเวลาแค่ 0.185 ns** ทุกครั้งที่แก้ RTL ต้องรัน `tta_paths` ใน Vivado (`fpga/vivado/tta.tcl`)
+- **ALU ยังเป็น path ที่ช้าที่สุด** ถ้าต้องการเวลาเพิ่ม แยกตัว compare ของ `MIN`/`MAX` ออกจาก adder ได้
+- **บทเรียน:** ถ้า signal ควบคุมตัวเดียวคุมหลาย FU ทั้งที่แต่ละ FU ต้องการเงื่อนไขไม่เท่ากัน ให้แยก enable ตามปลายทาง และ logic ที่ไม่ขึ้นกับค่าบน bus ให้ย้ายไปทำล่วงหน้าใน D stage
+
+### ทำไมไม่เพิ่มเป็น 450 MHz
+
+ตัวเลข "เกิน 450 MHz" ของ Arty คือเพดานของ primitive เดี่ยว ๆ ที่มี register ครอบ ตาม DS181 ค่าของ speed grade −1 เป็นดังนี้
+
+| ส่วนของชิป | Fmax (−1) |
+|---|---|
+| BUFG | 464 MHz |
+| DSP48E1 ที่ใส่ register ครบ | 464 MHz |
+| DSP48E1 คูณแบบไม่มี MREG | 257 MHz |
+| Block RAM / FIFO | 388 MHz |
+| MMCM (ตัวสร้าง clock) | 800 MHz |
+
+- ที่ 450 MHz หนึ่ง cycle มี 2.22 ns ทำ logic ได้แค่ 2–3 ชั้น แต่ X stage ตอนนี้มี 9–10 ชั้น ต้องหั่นเป็น 4–5 stage
+- การหั่นแบบนั้นขัดกับกฎ R2 ต้องเลือกระหว่างเพิ่ม bypass (ซึ่งกลายเป็น mux ยาวบน critical path) หรือเปลี่ยน ISA ให้ port ส่วนใหญ่มี latency ≥ 2 ทั้งสองทางเปลี่ยน spec ที่ freeze แล้ว และต้องเพิ่ม P, D, H, R และ latency ของ FU ทุกตัว
+- ผลกระทบไล่ตามกันไป Phase 0 แก้ spec และตัวอย่าง, Phase 1 ต้องแก้ test ที่ล็อกตัวเลข cycle ไว้ (ส่วน ISS และ assembler ปรับตาม `spec.py` เอง), Phase 2 ต้องออกแบบ pipeline ใหม่ทั้งหมด
+- **ตัดสินใจ (2026-10-07): คงไว้ที่ 100 MHz** เป้าหมายของโปรเจกต์คือ predictability ไม่ใช่ throughput (README: non-goals) และ jitter 0 กับ WCET ที่ tight ได้ครบที่ 100 MHz อยู่แล้ว
+- **future work:** ถ้าจะทดลองเร่ง clock ให้เล็ง 125–150 MHz ก่อน น่าจะต้องหั่นแค่ X stage ชั้นเดียวพร้อม bypass แต่เป็นการประเมิน ยังไม่ได้วัด ทำหลัง decision gate ของ Phase 4
+
+---
+
 ## รายการที่ต้องเขียนเพิ่มใน Phase 6
 
 - ประกาศว่า ISA เป็น constant-time โดยตั้งใจ อ้าง Liu §2.3 (มาจาก reading_notes_tier1 ข้อ 10)

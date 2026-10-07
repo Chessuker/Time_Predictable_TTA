@@ -1,0 +1,48 @@
+; Phase 2 board bring-up.
+;
+; Computes fib(20) once, then every 100 ms (10,000,000 cycles, on the anchor
+; grid, so it cannot drift) sends one record of 5 words over the UART and shows
+; the low 4 bits of a counter on LD4..LD7:
+;   0x54544131 ("TTA1"), counter, fib(20) = 6765 (0x1A6D), switches, tmr.flags
+; tmr.flags must read 0: the loop is never late.
+;
+; Host: py host/tools/uart_dump.py COMx
+
+        .data
+period: .word 10_000_000                ; 100 ms; too big for an immediate
+magic:  .word 0x5454_4131               ; "TTA1"
+
+        .text
+        #period     -> mem.t_load
+        mem.data_out -> r10
+        #magic      -> mem.t_load
+        mem.data_out -> r11
+        ; fib(20) as in programs/fib.tta
+        #0          -> r1
+        #1          -> r2
+        #20         -> r4
+        #ADD        -> alu.op
+@loop_bound 20
+fib:    r1          -> alu.a
+        r2          -> alu.t_b
+        r2          -> r1
+        alu.out     -> r2
+        r4          -> alu.a
+        #-1         -> alu.t_b
+        alu.out     -> r4
+        r4          -> pc.cond
+        #fib        -> pc.t_jnz
+        r1          -> r12                ; fib(20)
+        #0          -> r1                 ; record counter
+        #0          -> tmr.t_sync
+tick:   r10         -> tmr.t_advance      ; every 100 ms, exactly
+        r11         -> telem.t_push
+        r1          -> telem.t_push
+        r12         -> telem.t_push
+        io.encoder  -> telem.t_push
+        tmr.flags   -> telem.t_push
+        r1          -> io.pwm_cmd
+        r1          -> alu.a
+        #1          -> alu.t_b
+        alu.out     -> r1
+        #tick       -> pc.t_jump
