@@ -79,7 +79,9 @@
 - แก้: ใช้ `re = advance` อ่านทุกครั้งที่ pipeline เดิน ถ้าเกิด jump word ที่อ่านมาจะถูกทิ้งด้วย `ir_valid` อยู่แล้ว การอ่านเกินมา 1 word จึงไม่มีผลอะไร
 
 ### ข้อควรระวังต่อจากนี้
+- **เงื่อนไขบังคับ (จดไว้ 2026-10-08 ตามรีวิว PR #3):** ทุก commit ที่แตะ RTL ใต้ `Time_Predictable_TTA.srcs/sources_1/` ต้องได้ **WNS ≥ 0 และ WHS ≥ 0 ที่ 100 MHz** บน `xc7a100tcsg324-1` ตรวจด้วย `tta_timing` ใน Vivado ต้องขึ้น `met` ไม่ผ่านห้าม merge
 - **เหลือเวลาแค่ 0.185 ns** ทุกครั้งที่แก้ RTL ต้องรัน `tta_paths` ใน Vivado (`fpga/vivado/tta.tcl`)
+- **อย่าแยก `tta_core` เป็นหลาย module เพื่อความสวยงาม** การจัดโครงสร้างใหม่เปลี่ยนผล synthesis ได้ทั้งที่พฤติกรรมเท่าเดิม และ margin ตอนนี้แคบ (ความเห็นจากรีวิว PR #3)
 - **ALU ยังเป็น path ที่ช้าที่สุด** ถ้าต้องการเวลาเพิ่ม แยกตัว compare ของ `MIN`/`MAX` ออกจาก adder ได้
 - **บทเรียน:** ถ้า signal ควบคุมตัวเดียวคุมหลาย FU ทั้งที่แต่ละ FU ต้องการเงื่อนไขไม่เท่ากัน ให้แยก enable ตามปลายทาง และ logic ที่ไม่ขึ้นกับค่าบน bus ให้ย้ายไปทำล่วงหน้าใน D stage
 
@@ -100,6 +102,20 @@
 - ผลกระทบไล่ตามกันไป Phase 0 แก้ spec และตัวอย่าง, Phase 1 ต้องแก้ test ที่ล็อกตัวเลข cycle ไว้ (ส่วน ISS และ assembler ปรับตาม `spec.py` เอง), Phase 2 ต้องออกแบบ pipeline ใหม่ทั้งหมด
 - **ตัดสินใจ (2026-10-07): คงไว้ที่ 100 MHz** เป้าหมายของโปรเจกต์คือ predictability ไม่ใช่ throughput (README: non-goals) และ jitter 0 กับ WCET ที่ tight ได้ครบที่ 100 MHz อยู่แล้ว
 - **future work:** ถ้าจะทดลองเร่ง clock ให้เล็ง 125–150 MHz ก่อน น่าจะต้องหั่นแค่ X stage ชั้นเดียวพร้อม bypass แต่เป็นการประเมิน ยังไม่ได้วัด ทำหลัง decision gate ของ Phase 4
+
+---
+
+## Reset: core ใช้ synchronous reset ส่วน power-up เป็นเรื่องของบอร์ด *(จดไว้ 2026-10-08)*
+
+**ข้อตกลง:** register ทุกตัวใน `tta_core` และ FU ได้ค่าเริ่มต้นจาก `rst` แบบ synchronous active-high เท่านั้น ไม่พึ่งค่าตอนเปิดเครื่อง จึงใช้ได้ทั้ง FPGA ทุกยี่ห้อและ ASIC
+
+ข้อยกเว้นเดียวคือ**เนื้อหาของ code และ data SRAM** ซึ่ง `tta_sram_1r1w.sv` โหลดจาก image ด้วย `$readmemh` ใน `initial` (FPGA ทำให้ตอน configuration) `rst` ไม่ล้างหน่วยความจำ กด RESET แล้วโปรแกรมจึงเริ่มใหม่บน data ที่ค้างอยู่จากรอบก่อน ไม่ใช่ image เดิม ถ้าทำเป็น ASIC ต้องเปลี่ยนเป็น ROM หรือมีตัวโหลดโปรแกรมแยก
+
+**ส่วนที่เป็นของ Arty เท่านั้น** อยู่ใน `arty_tta_top.sv` ไม่ได้อยู่ใน core:
+- register ตัวสร้าง reset (`rst_sync`, `por`, `rst`) และ synchronizer ของสวิตช์ใช้ค่าเริ่มต้นแบบ `logic x = ...` ซึ่ง FPGA ของ Xilinx โหลดให้ตอน configuration (GSR) เพราะก่อนหน้านั้นไม่มี reset ตัวไหนมาจัดการให้
+- หลัง configuration จะค้าง `rst` ไว้ 16 cycle แล้วจึงปล่อย และปุ่ม RESET (`ck_rst`, active-low) ผ่าน synchronizer 2 ชั้นก่อนเข้า core
+
+ถ้าย้ายไปบอร์ดอื่นหรือทำ ASIC ให้เขียน top ใหม่ที่สร้าง `rst` ตามเทคโนโลยีนั้น เช่น ใช้วงจร power-on reset ของชิป ส่วน `tta_core` ไม่ต้องแก้
 
 ---
 

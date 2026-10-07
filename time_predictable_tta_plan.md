@@ -220,6 +220,12 @@ Soft-core ทั่วไปบนบอร์ดเดียวกัน (เ�
   - [ ] ทุก move (ที่ไม่ใช่ delay/jump penalty) ใช้ 1 cycle พอดี
   - [ ] Output ของ FU คงค่าไว้จนกว่าจะ trigger ครั้งถัดไป
   - [ ] Cover: เกิด trap, เกิด `late`, เกิด delay ได้จริง
+  - [ ] `fu_tmr` แบบระยะห่าง (`el`, `wrem`, `rem`) เทียบเท่ากับ spec ที่เขียนเป็นเวลา absolute (design_decisions: Timing closure ข้อ ข)
+- [ ] Regression ที่ค้างจากรีวิว PR #3 (lockstep หรือ unit test):
+  - [ ] Trap epc แบบเจาะจง: legality trap ที่ move N ต้องได้ `trap.epc == N` ส่วน deadline trap ต้องได้ epc เป็น move ถัดไปที่ยังไม่ได้รัน (isa.md §6)
+  - [ ] TMR ที่ขอบพอดี: `now` = target − 1, target, target + 1 ของ `t_wait` และ `t_advance` และ `now` = deadline − 1, deadline, deadline + 1 ของ `t_arm`
+  - [ ] Telemetry FIFO เต็มแล้ว UART pop กับ `telem.t_push` เกิดใน cycle เดียวกัน (pop ก่อน push, ไม่นับเป็น drop)
+  - [ ] Integration `tta_core → FIFO → UART` ผ่าน `arty_tta_top`: word แรก, ระยะ 1320 cycle ต่อ word, word ติดกัน และ drop
 
 **Done เมื่อ:** BMC + k-induction + cover ผ่านทุก property
 
