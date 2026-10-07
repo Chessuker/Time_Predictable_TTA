@@ -33,7 +33,7 @@ def main(argv=None):
         seen, last = 0, None
         print(f"listening on {args.port} at {args.baud} baud ...")
         while args.count == 0 or seen < args.count:
-            chunk = ser.read(64)
+            chunk = ser.read(max(1, ser.in_waiting))
             if not chunk:
                 print("no data for 2 s (wrong port, or the board is not programmed?)")
                 continue
