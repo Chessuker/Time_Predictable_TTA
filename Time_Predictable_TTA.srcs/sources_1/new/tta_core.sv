@@ -1,3 +1,24 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/06/2026 07:17:12 PM
+// Design Name: 
+// Module Name: tta_core.sv
+// Project Name: Time_Predictable_TTA
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
 // Time-predictable TTA core: one move per cycle, three-stage pipeline.
 //
 //   F  fetch_pc addresses the code SRAM (synchronous read)
@@ -56,9 +77,17 @@ module tta_core import tta_pkg::*; #(
   logic        ir_valid;
   logic [31:0] ir;
 
+  // One-hot source select, decoded in D so X does no port-ID decoding
+  // (this shortens every path that starts at the source mux).
+  typedef enum int {
+    S_IMM, S_REG, S_ALU, S_MUL, S_EQ, S_LT, S_LTU, S_LINK, S_MEM,
+    S_ELAPSED, S_FLAGS, S_HANDLER, S_CAUSE, S_EPC, S_ENC, S_DROPS, S_N
+  } src_sel_e;
+
   logic        x_valid, x_imm, x_illegal;
   logic [31:0] x_pc, x_word, x_immval;
   logic [7:0]  x_dst, x_src;
+  logic [S_N-1:0] x_sel;
 
   logic [31:0] regs [16];
   logic [31:0] alu_a, alu_out, mul_a, cmp_a;
@@ -73,9 +102,12 @@ module tta_core import tta_pkg::*; #(
   logic advance, flush;
   logic [31:0] redirect;
 
+  // The read enable does not wait for flush: on a redirect the word read
+  // this cycle is dropped through ir_valid anyway, and keeping the bus value
+  // (jump target, taken?) off the enable is a timing win.
   tta_sram_1r1w #(.WORDS(IMEM_W), .INIT_FILE(IMEM_INIT), .SIM_PLUSARG("code")) u_imem (
     .clk, .rst,
-    .re(advance && !flush), .raddr(fetch_pc[IAW-1:0]), .rdata(ir),
+    .re(advance), .raddr(fetch_pc[IAW-1:0]), .rdata(ir),
     .we(1'b0), .waddr('0), .wdata('0)
   );
 
@@ -90,36 +122,58 @@ module tta_core import tta_pkg::*; #(
   assign d_illegal = !port_writable(d_dst)
                    || (!d_imm && (ir[22:8] != '0 || !port_readable(d_src)));
 
+  logic [S_N-1:0] d_sel;
+  always_comb begin
+    d_sel = '0;
+    if (d_imm)                   d_sel[S_IMM] = 1'b1;
+    else if (d_src[7:4] == 4'h1) d_sel[S_REG] = 1'b1;
+    else unique case (d_src)
+      P_ALU_OUT:      d_sel[S_ALU]     = 1'b1;
+      P_MUL_OUT:      d_sel[S_MUL]     = 1'b1;
+      P_CMP_EQ:       d_sel[S_EQ]      = 1'b1;
+      P_CMP_LT:       d_sel[S_LT]      = 1'b1;
+      P_CMP_LTU:      d_sel[S_LTU]     = 1'b1;
+      P_PC_LINK:      d_sel[S_LINK]    = 1'b1;
+      P_MEM_DATA_OUT: d_sel[S_MEM]     = 1'b1;
+      P_TMR_ELAPSED:  d_sel[S_ELAPSED] = 1'b1;
+      P_TMR_FLAGS:    d_sel[S_FLAGS]   = 1'b1;
+      P_TRAP_HANDLER: d_sel[S_HANDLER] = 1'b1;
+      P_TRAP_CAUSE:   d_sel[S_CAUSE]   = 1'b1;
+      P_TRAP_EPC:     d_sel[S_EPC]     = 1'b1;
+      P_IO_ENCODER:   d_sel[S_ENC]     = 1'b1;
+      P_TELEM_DROPS:  d_sel[S_DROPS]   = 1'b1;
+      default: ;                         // illegal src: traps, value unused
+    endcase
+  end
+
   // ---------------------------------------------------------------- X: source read
   logic        hold, dl_hit, tmr_late, tmr_armed;
   logic [31:0] tmr_elapsed, mul_out, mem_data_out, drops;
-  logic [31:0] src_val, value;
+  logic [31:0] value;
 
+  // AND-OR of the one-hot selected source
   always_comb begin
-    src_val = '0;
-    if (x_src[7:4] == 4'h1) src_val = regs[x_src[3:0]];
-    else unique case (x_src)
-      P_ALU_OUT:      src_val = alu_out;
-      P_MUL_OUT:      src_val = mul_out;
-      P_CMP_EQ:       src_val = {31'b0, cmp_eq};
-      P_CMP_LT:       src_val = {31'b0, cmp_lt};
-      P_CMP_LTU:      src_val = {31'b0, cmp_ltu};
-      P_PC_LINK:      src_val = link;
-      P_MEM_DATA_OUT: src_val = mem_data_out;
-      P_TMR_ELAPSED:  src_val = tmr_elapsed;
-      P_TMR_FLAGS:    src_val = {29'b0, trapped, tmr_armed, tmr_late};
-      P_TRAP_HANDLER: src_val = handler;
-      P_TRAP_CAUSE:   src_val = {29'b0, cause};
-      P_TRAP_EPC:     src_val = epc;
-      P_IO_ENCODER:   src_val = io_encoder;
-      P_TELEM_DROPS:  src_val = drops;
-      default:        src_val = '0;
-    endcase
+    value = '0;
+    if (x_sel[S_IMM])     value |= x_immval;
+    if (x_sel[S_REG])     value |= regs[x_src[3:0]];
+    if (x_sel[S_ALU])     value |= alu_out;
+    if (x_sel[S_MUL])     value |= mul_out;
+    if (x_sel[S_EQ])      value |= {31'b0, cmp_eq};
+    if (x_sel[S_LT])      value |= {31'b0, cmp_lt};
+    if (x_sel[S_LTU])     value |= {31'b0, cmp_ltu};
+    if (x_sel[S_LINK])    value |= link;
+    if (x_sel[S_MEM])     value |= mem_data_out;
+    if (x_sel[S_ELAPSED]) value |= tmr_elapsed;
+    if (x_sel[S_FLAGS])   value |= {29'b0, trapped, tmr_armed, tmr_late};
+    if (x_sel[S_HANDLER]) value |= handler;
+    if (x_sel[S_CAUSE])   value |= {29'b0, cause};
+    if (x_sel[S_EPC])     value |= epc;
+    if (x_sel[S_ENC])     value |= io_encoder;
+    if (x_sel[S_DROPS])   value |= drops;
   end
-  assign value = x_imm ? x_immval : src_val;
 
   // ---------------------------------------------------------------- X: decision (R6 order)
-  logic exec_ok, taken, trap_dl, trap_enc, trap_val, trap, exec, halt_now;
+  logic exec_ok, exec_base, taken, trap_dl, trap_enc, trap_val, trap, exec, halt_now;
   logic bad_alu_op, bad_mem, bad_jump;
   logic [2:0] trap_cause;
 
@@ -137,6 +191,13 @@ module tta_core import tta_pkg::*; #(
   assign trap     = trap_dl || trap_enc || trap_val;
   assign exec     = exec_ok && !trap;
 
+  // exec_base: the move executes unless its own bus value is out of range.
+  // Each bad_* can only be true for its own dst (alu.op, mem.t_*, taken jumps),
+  // so every other dst enables on exec_base, which does not wait for the
+  // value compares. This keeps src mux -> compare -> trap off the write-enable
+  // path of every FU (it was the critical path at 100 MHz).
+  assign exec_base = exec_ok && !trap_dl && !x_illegal;
+
   always_comb begin
     if      (trap_dl)    trap_cause = CAUSE_DEADLINE;
     else if (trap_enc)   trap_cause = CAUSE_ILLEGAL_PORT;
@@ -146,7 +207,7 @@ module tta_core import tta_pkg::*; #(
   end
 
   logic do_halt, trap_halts;
-  assign do_halt    = exec && x_dst == P_TRAP_T_HALT;
+  assign do_halt    = exec_base && x_dst == P_TRAP_T_HALT;
   assign trap_halts = trap && (trapped || handler == '0);
   assign halt_now   = do_halt || trap_halts;
 
@@ -158,27 +219,27 @@ module tta_core import tta_pkg::*; #(
   logic [31:0] alu_y;
   fu_alu u_alu (.op(alu_op), .a(alu_a), .b(value), .y(alu_y));
 
-  fu_mul u_mul (.clk, .rst, .trig(exec && x_dst == P_MUL_T_B), .a(mul_a), .b(value), .out(mul_out));
+  fu_mul u_mul (.clk, .rst, .trig(exec_base && x_dst == P_MUL_T_B), .a(mul_a), .b(value), .out(mul_out));
 
   tta_sram_1r1w #(.WORDS(DMEM_W), .INIT_FILE(DMEM_INIT), .SIM_PLUSARG("data")) u_dmem (
     .clk, .rst,
-    .re(exec && x_dst == P_MEM_T_LOAD),  .raddr(value[DAW-1:0]), .rdata(mem_data_out),
-    .we(exec && x_dst == P_MEM_T_STORE), .waddr(value[DAW-1:0]), .wdata(mem_data_in)
+    .re(exec_base && x_dst == P_MEM_T_LOAD  && !bad_mem), .raddr(value[DAW-1:0]), .rdata(mem_data_out),
+    .we(exec_base && x_dst == P_MEM_T_STORE && !bad_mem), .waddr(value[DAW-1:0]), .wdata(mem_data_in)
   );
 
   fu_tmr u_tmr (
-    .clk, .rst, .now,
-    .do_sync   (exec && x_dst == P_TMR_T_SYNC),
-    .do_advance(exec && x_dst == P_TMR_T_ADVANCE),
-    .do_wait   (exec && x_dst == P_TMR_T_WAIT),
-    .do_arm    (exec && x_dst == P_TMR_T_ARM),
-    .do_clear  (exec && x_dst == P_TMR_T_CLEAR),
+    .clk, .rst,
+    .do_sync   (exec_base && x_dst == P_TMR_T_SYNC),
+    .do_advance(exec_base && x_dst == P_TMR_T_ADVANCE),
+    .do_wait   (exec_base && x_dst == P_TMR_T_WAIT),
+    .do_arm    (exec_base && x_dst == P_TMR_T_ARM),
+    .do_clear  (exec_base && x_dst == P_TMR_T_CLEAR),
     .v(value), .trap_take(trap),
     .hold, .dl_hit, .elapsed(tmr_elapsed), .late(tmr_late), .armed(tmr_armed)
   );
 
   fu_telem #(.DEPTH(TELEM_FIFO_WORDS), .CYCLES_PER_WORD(TELEM_CYCLES_PER_WORD)) u_telem (
-    .clk, .rst, .push(exec && x_dst == P_TELEM_T_PUSH), .data(value),
+    .clk, .rst, .push(exec_base && x_dst == P_TELEM_T_PUSH), .data(value),
     .drops, .tx_start(telem_tx_start), .tx_data(telem_tx_data)
   );
 
@@ -188,7 +249,7 @@ module tta_core import tta_pkg::*; #(
       now <= '0;
       fetch_pc <= '0; ir_pc <= '0; ir_valid <= 1'b0; arch_pc <= '0;
       x_valid <= 1'b0; x_imm <= 1'b0; x_illegal <= 1'b0;
-      x_pc <= '0; x_word <= '0; x_immval <= '0; x_dst <= '0; x_src <= '0;
+      x_pc <= '0; x_word <= '0; x_immval <= '0; x_dst <= '0; x_src <= '0; x_sel <= '0;
       for (int i = 0; i < 16; i++) regs[i] <= '0;
       alu_a <= '0; alu_op <= '0; alu_out <= '0; mul_a <= '0; cmp_a <= '0;
       cmp_eq <= 1'b0; cmp_lt <= 1'b0; cmp_ltu <= 1'b0;
@@ -214,6 +275,7 @@ module tta_core import tta_pkg::*; #(
         x_src     <= d_src;
         x_imm     <= d_imm;
         x_immval  <= d_immval;
+        x_sel     <= d_sel;
         x_illegal <= d_illegal;
       end
 
@@ -227,12 +289,12 @@ module tta_core import tta_pkg::*; #(
       end
       if (halt_now) halted <= 1'b1;
 
-      // ---- dst writes
-      if (exec) begin
+      // ---- dst writes (exec_base: see the note at its definition)
+      if (exec_base) begin
         if (x_dst[7:4] == 4'h1) regs[x_dst[3:0]] <= value;
         unique case (x_dst)
           P_ALU_A:        alu_a <= value;
-          P_ALU_OP:       alu_op <= value[3:0];
+          P_ALU_OP:       if (!bad_alu_op) alu_op <= value[3:0];
           P_ALU_T_B:      alu_out <= alu_y;
           P_MUL_A:        mul_a <= value;
           P_CMP_A:        cmp_a <= value;
@@ -242,7 +304,7 @@ module tta_core import tta_pkg::*; #(
             cmp_ltu <= cmp_a < value;
           end
           P_PC_COND:      cond <= value;
-          P_PC_T_CALL:    link <= x_pc + 32'd1;
+          P_PC_T_CALL:    if (!bad_jump) link <= x_pc + 32'd1;
           P_PC_LINK:      link <= value;
           P_MEM_DATA_IN:  mem_data_in <= value;
           P_TRAP_HANDLER: handler <= value;
