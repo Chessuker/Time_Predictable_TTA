@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from .test_asm import EXAMPLE_1
-from .test_iss import HANDLER, IF_ELSE, LOOP, A0, control
+from .test_iss import (A0, DEADLINE_EDGE, EPC_ILLEGAL, EPC_IN_JUMP, FIFO_EDGE, HANDLER, IF_ELSE, LOOP,
+                       POP_2, TIMING_EDGE, control)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -113,6 +114,17 @@ tbl:    .word -2
 for _op, _a, _b in [("ADD", 7, -9), ("SUB", 3, 5), ("AND", 12, 10), ("OR", 12, 10), ("XOR", 12, 10),
                     ("SHL", 1, 33), ("SHR", -1, 28), ("SRA", -16, 2), ("MIN", -5, 3), ("MAX", -5, 3)]:
     CASES[f"alu_{_op.lower()}"] = (ALU.format(op=_op, a=_a, b=_b), None, 1_000)
+# exact boundaries from the PR #3 review (expected values are in test_iss.py)
+for _op in ("t_wait", "t_advance"):
+    for _v in (2, 1, 0):
+        CASES[f"edge_{_op}_v{_v}"] = (TIMING_EDGE.format(op=_op, v=_v), None, 1_000)
+for _v in range(4):
+    CASES[f"edge_arm_v{_v}"] = (DEADLINE_EDGE.format(v=_v), None, 1_000)
+for _v in range(2, 6):
+    CASES[f"epc_jump_v{_v}"] = (EPC_IN_JUMP.format(v=_v), None, 1_000)
+CASES["epc_illegal"] = (EPC_ILLEGAL, None, 1_000)
+for _v in (POP_2 - 2, POP_2 - 1, POP_2):
+    CASES[f"fifo_full_v{_v}"] = (FIFO_EDGE.format(v=_v), None, 5_000)
 for _p in sorted((ROOT / "programs").glob("*.tta")):
     CASES[f"prog_{_p.stem}"] = (_p.read_text(encoding="utf-8"), None, 1_000_000)
 
