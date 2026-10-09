@@ -260,6 +260,106 @@ def test_deadline_beats_illegal_in_the_same_cycle():
     assert records(r, "T") == [f"T {sync + 3} 00000004 1"]
 
 
+# ---------------------------------------------------------------- PR #3 review: exact boundaries
+# Each program below is also run in lockstep (tests/test_lockstep.py), so the
+# RTL is held to the same numbers.
+
+# t_wait / t_advance at c = R + 1 with anchor = R, so T = R + v and
+# v = 2, 1, 0 put the move at now = T - 1, T, T + 1.
+TIMING_EDGE = """
+        #0          -> tmr.t_sync
+        #{v}        -> tmr.{op}
+        tmr.flags   -> r1
+        tmr.elapsed -> r2
+        #0          -> trap.t_halt
+"""
+
+
+@pytest.mark.parametrize("op", ["t_wait", "t_advance"])
+@pytest.mark.parametrize("v, stall, late", [(2, 1, 0), (1, 0, 0), (0, 0, 1)])
+def test_timing_move_at_target_boundaries(op, v, stall, late):
+    r = run(TIMING_EDGE.format(op=op, v=v))
+    c = R + 1
+    assert moves(r, "r1")[0][0] == c + stall + spec.D     # max(c, T) + D
+    assert r.sim.regs[1] == late                         # flags = {trapped, armed, late}
+    anchor = R + v if op == "t_advance" else R
+    assert r.sim.regs[2] == c + stall + spec.D + 1 - anchor
+
+
+# t_arm at c = R + 2 with anchor = R + 1, so deadline = R + 1 + v and
+# v = 0..3 put the deadline at c - 1, c, c + 1, c + 2.
+DEADLINE_EDGE = """
+        #h          -> trap.handler
+        #0          -> tmr.t_sync
+        #{v}        -> tmr.t_arm
+        nop
+        nop
+        nop
+        #0          -> trap.t_halt
+""" + HANDLER
+
+
+@pytest.mark.parametrize("v, d, epc", [
+    (0, R + 3, 3),            # deadline already past: trap at c + 1
+    (1, R + 3, 3),            # deadline = c: trap at c + 1
+    (2, R + 3, 3),            # deadline = c + 1: trap exactly there, not at c
+    (3, R + 4, 4),            # deadline = c + 2: no trap at c + 1
+])
+def test_deadline_boundaries(v, d, epc):
+    r = run(DEADLINE_EDGE.format(v=v))
+    assert records(r, "T") == [f"T {d} {epc:08x} 1"]
+    assert r.sim.regs[2] == epc
+
+
+# trap.epc is the next move in program order that has not executed (R6), in
+# every place a deadline can land: on a move, in a jump bubble, on the target.
+EPC_IN_JUMP = """
+        #h          -> trap.handler
+        #0          -> tmr.t_sync
+        #{v}        -> tmr.t_arm
+        #tgt        -> pc.t_jump
+        nop
+tgt:    #0          -> trap.t_halt
+""" + HANDLER
+
+
+@pytest.mark.parametrize("v, d, epc", [
+    (2, R + 3, 3),            # on the jump itself: squashed, epc = the jump
+    (3, R + 4, 5),            # first bubble: epc = target
+    (4, R + 5, 5),            # second bubble: epc = target
+    (5, R + 6, 5),            # on the target: squashed, epc = target
+])
+def test_trap_epc_around_a_jump(v, d, epc):
+    r = run(EPC_IN_JUMP.format(v=v))
+    assert records(r, "T") == [f"T {d} {epc:08x} 1"]
+    assert r.sim.regs[2] == epc
+
+
+EPC_ILLEGAL = "#h -> trap.handler\n" + "nop\n" * 5 + ".illegal 0x0F80_0000\n" + HANDLER
+
+
+def test_trap_epc_is_the_illegal_move():
+    r = run(EPC_ILLEGAL)
+    assert records(r, "T") == [f"T {R + 6} 00000006 2"] and r.sim.regs[2] == 6
+
+
+# FIFO full: 65 pushes from R + 1 leave 64 words queued and one in the UART,
+# whose next pop is at R + 2 + TELEM_CYCLES_PER_WORD. One more push lands at
+# R + v + 1: one cycle early it is dropped, on the pop cycle it fits (the UART
+# pops first, sec. 6.5 of toolchain_formats.md), one cycle late it fits.
+FIFO_EDGE = ("#0 -> tmr.t_sync\n" + "#0 -> telem.t_push\n" * (spec.TELEM_FIFO_WORDS + 1)
+             + "#{v} -> tmr.t_wait\n#1 -> telem.t_push\ntelem.drops -> r1\n#0 -> trap.t_halt")
+POP_2 = 2 + spec.TELEM_CYCLES_PER_WORD               # second pop, relative to the sync at R
+
+
+@pytest.mark.parametrize("v, drops", [(POP_2 - 2, 1), (POP_2 - 1, 0), (POP_2, 0)])
+def test_fifo_full_push_on_the_pop_cycle(v, drops):
+    r = run(FIFO_EDGE.format(v=v))
+    assert moves(r, "telem.t_push")[-1][0] == R + v + 1
+    assert r.sim.regs[1] == drops
+    assert len(r.sim.telem.accepted) == spec.TELEM_FIFO_WORDS + 2 - drops
+
+
 # ---------------------------------------------------------------- FUs
 @pytest.mark.parametrize("op, a, b, out", [
     ("ADD", 7, -9, -2), ("SUB", 3, 5, -2), ("AND", 12, 10, 8), ("OR", 12, 10, 14),

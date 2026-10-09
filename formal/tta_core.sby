@@ -1,0 +1,40 @@
+# SymbiYosys config for the Phase 3 core properties (formal/tta_formal.sv).
+#
+#   sby -f tta_core.sby          all tasks
+#   sby -f tta_core.sby prove    one task
+#
+# prove: k-induction, an unbounded proof (its base case is a BMC of the same
+#        depth). About 3 minutes.
+# cover: every cover statement must be reachable, which shows the
+#        assumptions do not rule out the behaviour the asserts talk about.
+#
+# The RTL is read straight from the Vivado source folder; only the memory is
+# swapped for the unconstrained formal stand-in (tta_sram_1r1w_any.sv).
+
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+prove: depth 12
+cover: mode cover
+cover: depth 30
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+plugin -i slang
+read_slang --top tta_formal tta_pkg.sv tta_sram_1r1w_any.sv fu_alu.sv fu_mul.sv fu_tmr.sv fu_telem.sv tta_core.sv tta_formal.sv
+prep -top tta_formal
+
+[files]
+../Time_Predictable_TTA.srcs/sources_1/new/tta_pkg.sv
+../Time_Predictable_TTA.srcs/sources_1/new/fu_alu.sv
+../Time_Predictable_TTA.srcs/sources_1/new/fu_mul.sv
+../Time_Predictable_TTA.srcs/sources_1/new/fu_tmr.sv
+../Time_Predictable_TTA.srcs/sources_1/new/fu_telem.sv
+../Time_Predictable_TTA.srcs/sources_1/new/tta_core.sv
+tta_sram_1r1w_any.sv
+tta_formal.sv
