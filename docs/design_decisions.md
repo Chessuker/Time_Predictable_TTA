@@ -119,6 +119,35 @@
 
 ---
 
+## Formal verification ของ core *(จดไว้ 2026-10-08)*
+
+**ผล:** k-induction ผ่าน (`formal/tta_core.sby` task `prove` ใช้เวลาราว 3 นาที) และ cover ผ่านครบทั้ง 6 ข้อ เครื่องมือคือ SymbiYosys กับ yosys-slang ใน oss-cad-suite (WSL Ubuntu-24.04) รันผ่าน `tests/test_formal.py`
+
+**วิธี (ตัดสินร่วมกับผู้ใช้):**
+- **instruction stream อิสระ** ตอน formal ใช้ `formal/tta_sram_1r1w_any.sv` แทน SRAM จริงทั้ง code และ data ทุกครั้งที่อ่านจะได้ word อะไรก็ได้ property ที่ผ่านจึงจริงกับทุกโปรแกรม รวมโปรแกรมที่มี move illegal ส่วน RTL ใน `.srcs` ไม่ได้แก้เลย
+- **reference model แบบ absolute** อยู่ใน harness เขียนตาม R5/R6 ตรงตัว (`now`, `anchor`, `deadline`, target 64 bit และ "move ถัดไปถึงกำหนดที่ cycle ไหน PC อะไร") model ดูแค่สิ่งที่ core รายงานออกมา (`rv_*`, `tr_*`, `ht_*`) แล้ว assert ว่าทุก cycle ตรงกัน การพิสูจน์นี้จึงเป็นทั้งการตรวจ property ใน plan และการพิสูจน์ว่า `fu_tmr` แบบระยะห่างเทียบเท่ากับ spec (ค้างไว้จากหัวข้อ Timing closure ข้อ ข)
+- ไฟล์ formal อยู่ที่ `formal/` ไม่ใช่ `.srcs` เพราะ Vivado ใช้ไม่ได้ และจะมี module `tta_sram_1r1w` ซ้ำกันสองตัว
+
+**Assumption มีแค่กฎที่ assembler บังคับอยู่แล้ว**
+- S3: `t_advance` ไม่ execute ขณะ armed
+- R7: `now` ไม่วนรอบ (จำกัดไว้ที่ 2^62 ราว 1,461 ปีที่ 100 MHz)
+
+cover ทั้ง 6 ข้อยืนยันว่า assumption ไม่ได้ตัดพฤติกรรมที่ assert พูดถึงทิ้ง
+
+**Invariant ที่ k-induction ต้องการ** (ได้มาจาก counterexample ของ induction ทีละข้อ):
+- `el = now − anchor` เสมอ (mod 2^64)
+- ระหว่าง stall `wrem = target − now` ขณะ armed และยังไม่ถึง deadline `rem = deadline − now`
+- สถานะของ F, D, X สัมพันธ์กับ cycle ที่ move ถัดไปถึงกำหนด (ห่าง 2, 1 หรือ 0 cycle)
+- `anchor > now` ได้เฉพาะระหว่าง stall ของ `t_advance` (ซึ่ง `anchor == target`) และตอนนั้นต้องไม่ armed เพราะ S3 ถูกเช็คแค่ตอน `t_advance` execute ส่วน induction เริ่มจากกลาง stall ได้
+
+**Mutation test:** ใส่บั๊กลงในสำเนาของ `fu_tmr.sv` สองแบบ ทั้งสองแบบ proof ล้มภายในไม่กี่ step
+- deadline trap เร็วไป 1 cycle (`rem == 2`) ล้มที่ A3
+- stall นานไป 1 cycle (`el <= v`) ล้มที่ A2
+
+**ข้อจำกัด:** model ไม่ได้ตรวจค่าที่ FU คำนวณออกมา (ALU, MUL, memory) และไม่ได้ตรวจ cause ของ legality trap ส่วนนี้ยังพึ่ง lockstep กับ ISS ตามเดิม formal ครอบเรื่องเวลา, PC, trap และ halt
+
+---
+
 ## รายการที่ต้องเขียนเพิ่มใน Phase 6
 
 - ประกาศว่า ISA เป็น constant-time โดยตั้งใจ อ้าง Liu §2.3 (มาจาก reading_notes_tier1 ข้อ 10)
