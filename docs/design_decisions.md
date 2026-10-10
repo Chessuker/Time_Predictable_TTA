@@ -180,16 +180,37 @@ plant มอเตอร์ DC ของ Phase 5 อยู่ใน top ขอ�
 
 **ตัดสินใจ (2026-10-10):** บอร์ดใช้แบบหลาย cycle ส่วนแบบ cycle เดียวเก็บไว้เป็น baseline ใน repo และเทสต์ยังตรวจว่าตรงกับ Python ทุก bit
 
-**ผลบนบอร์ด (2026-10-11):** design ทั้งตัวที่มี plant ผ่าน timing ด้วย WNS +0.406 ns และ WHS +0.036 ns critical path ไม่ได้อยู่ใน plant แต่อยู่ที่ data memory → ALU ของ core
+**ผลบนบอร์ด (2026-10-10):** design ทั้งตัวที่มี plant ผ่าน timing ด้วย WNS +0.406 ns และ WHS +0.036 ns critical path ไม่ได้อยู่ใน plant แต่อยู่ที่ data memory → ALU ของ core
 
 **Setpoint และโหลด (ตัดสินใจ 2026-10-10):**
 - **ตอนนี้:** setpoint มาจากตารางใน `.data` ของโปรแกรม ส่วนแรงบิดโหลดมาจากช่วงเวลาตายตัวที่ `hil_env.sv` นับจาก reset ทั้งคู่กำหนดไว้ใน `host/hil/env.py` การรันทุกครั้งจึงได้ผลเดิมทุก cycle และเทียบกับ model ได้ตรงตัว
-- **ส่วนเสริมภายหลัง:** สวิตช์บนบอร์ด ต้องเพิ่ม port `io.sw` ใน ISA ที่ freeze แล้ว
+- **ส่วนเสริมภายหลัง:** สวิตช์บนบอร์ด ทำแล้วในชื่อ `io.din` ดูหัวข้อ Switch mode ด้านล่าง
 
 **Deadline trap บนบอร์ด:**
 - **วิธีทดสอบ:** ใช้โปรแกรมแยก `control_trap.tta` ให้ period ที่ 50 วนเกิน deadline โดยตั้งใจ
 - **ผล:** trap เกิดที่ anchor + 2000 พอดี handler เริ่มที่ anchor + 2003 สั่ง `pwm_cmd = 0` ส่ง record แล้ว halt ตรงกับ ISS ทุกค่า
 - **WCET:** tool รายงานโปรแกรมนี้ว่า OVER ซึ่งเป็นสิ่งที่ตั้งใจ ส่วน `control.tta` ได้ W = 90 จาก budget 999
+
+---
+
+## Switch mode: input ภายนอกผ่าน `io.din` *(จดไว้ 2026-10-10)*
+
+ให้สวิตช์บนบอร์ดเลือก setpoint และเปิดปิดโหลดได้ระหว่างรัน รายละเอียดของ interface และสิ่งที่รับประกันอยู่ใน [io_interface.md](io_interface.md)
+
+**ตัดสินใจร่วมกับผู้ใช้:**
+- **เป้าหมายรอบนี้เป็น demo ที่ตรวจเรื่องเวลาได้** ยังไม่อ้างว่าเทียบกับ plant model ได้ทุก bit เมื่อ input เปลี่ยน แต่ออกแบบเผื่อ production คือเผื่อ input capture, deterministic replay และ fault handling ระดับ application
+- **ชื่อ `io.din` ไม่ใช่ `io.sw`:** ISA มองเป็น input ภายนอกทั่วไป ส่วนสวิตช์บน Arty เป็นแค่ผู้ใช้รายแรก synchronizer และ debounce อยู่ใน board interface ไม่อยู่ใน core ทำให้ spec ไม่ผูกกับ vendor การเพิ่ม port เปลี่ยนเซตของ encoding ที่ legal จึงเปลี่ยน `SPEC_ID` เป็น `phase5-din-2026-10-10`
+- **โปรแกรมแยก `control_sw.tta`:** `control.tta`, `control_trap.tta` และ `wcet_bench.tta` ไม่เปลี่ยนเลย baseline ของ Phase 4–5 จึงยังใช้ได้ตรงตัว ความต่างระหว่างสองโหมดอยู่ที่ image ที่โหลด จึงไม่ใช้ `sw[3]` เลือกโหมด และสงวนไว้
+- **setpoint ต้องกด BTN0 เพื่อ commit:** debounce ทั้งกลุ่มกันค่าชั่วคราวที่เกิดจากการเด้งและ synchronizer ได้ แต่กันโค้ดตรงกลางที่นิ่งจริงตอนคนบิดสวิตช์สองตัวทีละตัวไม่ได้
+- **สวิตช์โหลดอยู่ฝั่ง environment:** ต่อเข้า `hil_env` ตรง เพราะโหลดเป็นแรงรบกวนจากภายนอก ไม่ใช่คำสั่งที่ controller รับ ค่าของสวิตช์ยังปรากฏใน `din[2]` เพื่อให้ telemetry บอกสถานะโหลดของแต่ละ period ได้ ช่องนี้ใช้ได้เฉพาะ HIL และจะถูกแทนด้วย input capture
+- **ช่วงโหลดตามเวลาของ Phase 5 ยังอยู่** (`load_on = window | load_sw`) เมื่อสวิตช์ลงหมด บอร์ดจึงทำงานเท่ากับ Phase 5 ทุก cycle
+
+**ผลบนบอร์ด (2026-10-10):**
+- timing ของ design ที่มี `board_din` ได้ WNS +0.406 ns และ WHS +0.036 ns เท่ากับก่อนเพิ่ม เพราะ path ที่ช้าที่สุดยังเป็น data memory → ALU ของ core
+- regression เมื่อสวิตช์ลงหมด: `control` 3,000 period, `control_trap` และ `wcet_bench` 48 run ได้ YES ทั้งหมด
+- `control_sw` เมื่อสวิตช์ลงหมด: 10,000 period ตรงกับ model ทุกค่า
+- `control_sw` เมื่อใช้สวิตช์: 20,000 period อ่าน encoder ที่ anchor + 1, din ที่ + 2 และ actuate ที่ + 1001 ทุก period, flags 0 และ setpoint ตรงกับ din ทุก period ลำดับ din ที่บันทึกได้คือ 0 → 1 (commit +1 รอบ) → 5 (โหลดเปิด) → 1 → 2 (commit −1 รอบ) → 3 (commit +½ รอบ) ระหว่าง commit ครั้งที่ 2 และ 3 (period 14056 ถึง 18629) din ไม่เปลี่ยนเลย
+- ช่วงที่เปิดโหลด ตำแหน่งตกไป 73 count แล้ว integral ดึงกลับ ส่วน pwm_cmd ค้างที่ราว +250 เพื่อต้านโหลด
 
 ---
 

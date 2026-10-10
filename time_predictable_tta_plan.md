@@ -247,9 +247,9 @@ Soft-core ทั่วไปบนบอร์ดเดียวกัน (เ�
 - [x] Control task เป็น TTA assembly พร้อม `@task` และ `@loop_bound` *(`programs/control.tta` generate จาก `host/hil/programs.py`, เท่ากับ `FixedPID` ทุก period)*
 - [x] TELEM FU + Python receiver + plot (position, command, t_sense/t_actuate) *(`py -m host.hil.board COMx` เทียบทุกค่ากับ model แล้วเขียน CSV และ PNG)*
 - [x] Deadline trap test: จงใจยืด control law ให้เกิน deadline แล้วยืนยันว่า trap เกิดที่ cycle ที่ถูกต้อง *(`programs/control_trap.tta`: trap ที่ anchor + 2000 พอดี handler ที่ + 2003 ทั้ง ISS, lockstep และบอร์ด)*
-- [ ] ส่วนเสริม: สวิตช์บนบอร์ดเลือก setpoint และเปิดปิดโหลด (ต้องเพิ่ม port `io.sw` ใน ISA, ตัดสินใจ 2026-10-10 ให้ทำหลัง Done)
+- [x] ส่วนเสริม: สวิตช์บนบอร์ดเลือก setpoint และเปิดปิดโหลด *(port `io.din` ที่ `0x92`, `SPEC_ID` = `phase5-din-2026-10-10`; `board_din.sv` debounce + commit ด้วย BTN0; `programs/control_sw.tta`; บนบอร์ดเวลาและ mapping ถูกทุก period และตรงกับ model ทุกค่าเมื่อสวิตช์ลงหมด ดู docs/io_interface.md)*
 
-**Done เมื่อ:** closed loop เสถียรบนบอร์ด, step response ตรงกับ Python model, WCET tool ยืนยันว่า control task อยู่ใต้ deadline *(ผ่านแล้ว 2026-10-11: บอร์ด 3,000 period ตรงกับ model ทุกค่า, sense/actuate ที่ anchor + 1 / + 1001 ทุก period, W = 90 จาก budget 999; timing WNS +0.406 ns)*
+**Done เมื่อ:** closed loop เสถียรบนบอร์ด, step response ตรงกับ Python model, WCET tool ยืนยันว่า control task อยู่ใต้ deadline *(ผ่านแล้ว 2026-10-10: บอร์ด 3,000 period ตรงกับ model ทุกค่า, sense/actuate ที่ anchor + 1 / + 1001 ทุก period, W = 90 จาก budget 999; timing WNS +0.406 ns)*
 
 ### Phase 6 — Baseline และ benchmark (สัปดาห์ 11)
 
