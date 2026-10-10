@@ -231,12 +231,12 @@ Soft-core ทั่วไปบนบอร์ดเดียวกัน (เ�
 
 ### Phase 4 — WCET tool และการยืนยัน (สัปดาห์ 7–8)
 
-- [ ] CFG builder + loop bound + longest path
-- [ ] Hardware cycle counter วัด start/end ของแต่ละ task ผ่าน telemetry
-- [ ] สำหรับทุก test program: หา input ที่ทำให้วิ่ง worst-case path แล้ววัดบนบอร์ด
-- [ ] ตาราง WCET (static) เทียบ measured max ของทุก program
+- [x] CFG builder + loop bound + longest path *(`host/wcet/`, IPET ด้วย ILP; วิธีอยู่ใน `docs/wcet_method.md`)*
+- [x] Hardware cycle counter วัด start/end ของแต่ละ task ผ่าน telemetry *(`t_sync` → call → `tmr.elapsed` ใน `programs/wcet_bench.tta`)*
+- [x] สำหรับทุก test program: หา input ที่ทำให้วิ่ง worst-case path แล้ววัดบนบอร์ด *(dataset 0 ของแต่ละ benchmark จาก witness path; วัดด้วย `host/tools/wcet_board.py`)*
+- [x] ตาราง WCET (static) เทียบ measured max ของทุก program *(`docs/wcet_method.md` §6)*
 
-**Done เมื่อ:** static WCET **เท่ากับ** measured ที่ worst-case input ในทุก program และ measured ไม่เคยเกิน static ในการรัน input แบบสุ่ม
+**Done เมื่อ:** static WCET **เท่ากับ** measured ที่ worst-case input ในทุก program และ measured ไม่เคยเกิน static ในการรัน input แบบสุ่ม *(ผ่านแล้ว 2026-10-10: บอร์ด 48 run ตรงกับ ISS ทุกตัว, worst case เท่ากับ static ทั้ง 6 benchmark; input สุ่ม 280 ชุดต่อ benchmark ใน ISS ไม่เกิน static)*
 
 > **Decision gate ก่อนเดดไลน์ฝึกงานธันวาคม:** Phase 0–4 เพียงพอเป็นงานพอร์ตที่สมบูรณ์ในตัวเอง ("processor ที่ WCET พิสูจน์ได้และตรงกับฮาร์ดแวร์") ถ้าเวลาเริ่มกระทบ GALS NoC ให้หยุดตรงนี้แล้วเขียน README ก่อน HIL demo เป็นส่วนเสริมที่ทำหลังได้
 

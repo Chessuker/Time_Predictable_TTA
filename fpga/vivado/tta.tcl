@@ -6,8 +6,9 @@
 # Then:
 #   tta_setup         register the HDL in Time_Predictable_TTA.srcs with the project
 #                     (run again after adding a file); sets the top and the generics
-#   tta_asm ?name?    assemble programs/<name>.tta (default board_hello) into build/board,
-#                     the images arty_tta_top loads at synthesis
+#   tta_asm ?name?    assemble programs/<name>.tta (default board_hello) into build/board
+#                     and make it the image arty_tta_top loads at synthesis
+#   tta_use name      switch the image to an already assembled program
 #   tta_timing        after implementation: print WNS/WHS of the routed design
 #   tta_paths ?n?     tta_timing plus one line per worst setup path
 #
@@ -49,15 +50,22 @@ proc tta_setup {} {
     set_property top tb_tta [get_filesets sim_1]
     set_property verilog_define TTA_SIM [get_filesets sim_1]
 
-    # The images are generated into build/ (not in git). Absolute paths,
-    # because synthesis runs inside Time_Predictable_TTA.runs/synth_1.
-    set img [file join $root build board]
-    set_property generic [list \
-        "IMEM_INIT=\"[file join $img board_hello.code.hex]\"" \
-        "DMEM_INIT=\"[file join $img board_hello.data.hex]\"" \
-    ] [get_filesets sources_1]
+    # keep the program chosen with tta_asm/tta_use; board_hello the first time
+    if {[get_property generic [get_filesets sources_1]] eq ""} { tta_use board_hello }
 
     puts "tta_setup: top = [get_property top [get_filesets sources_1]], [llength [get_files -of_objects [get_filesets sources_1]]] design files"
+}
+
+# The images are generated into build/ (not in git). Absolute paths, because
+# synthesis runs inside Time_Predictable_TTA.runs/synth_1. Changing them marks
+# synthesis out of date, so the next Generate Bitstream picks the new program.
+proc tta_use {name} {
+    set img [file join [tta_root] build board]
+    set_property generic [list \
+        "IMEM_INIT=\"[file join $img $name.code.hex]\"" \
+        "DMEM_INIT=\"[file join $img $name.data.hex]\"" \
+    ] [get_filesets sources_1]
+    puts "tta_use: arty_tta_top now loads $name (build/board/$name.*.hex)"
 }
 
 proc tta_asm {{name board_hello}} {
@@ -79,9 +87,7 @@ proc tta_asm {{name board_hello}} {
     dict for {k v} $saved { set ::env($k) $v }
     puts $out
     if {$rc} { error "tta_asm: assembler failed" }
-    if {$name ne "board_hello"} {
-        puts "tta_asm: note: arty_tta_top loads board_hello.*.hex; change the generics to use $name"
-    }
+    tta_use $name
 }
 
 proc tta_timing {} {
