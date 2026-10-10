@@ -11,6 +11,8 @@
 #   tta_use name      switch the image to an already assembled program
 #   tta_timing        after implementation: print WNS/WHS of the routed design
 #   tta_paths ?n?     tta_timing plus one line per worst setup path
+#   tta_plant_compare place and route both plant implementations on their own at
+#                     100 MHz and print WNS, logic levels, LUT, FF and DSP
 #
 # Build and program with the usual buttons: Generate Bitstream, then
 # Open Hardware Manager -> Program Device.
@@ -101,6 +103,40 @@ proc tta_timing {} {
     set whs [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -hold]]
     if {$wns >= 0 && $whs >= 0} { set verdict "met" } else { set verdict "NOT met" }
     puts "tta_timing: WNS = $wns ns, WHS = $whs ns ($verdict at 100 MHz)"
+}
+
+# Phase 5: build one plant implementation on its own (out of context, 100 MHz,
+# placed and routed, in memory; no project run is touched) and return its numbers.
+proc tta_plant_ooc {top} {
+    synth_design -top $top -mode out_of_context -part [get_property PART [current_project]]
+    create_clock -name clk -period 10.000 [get_ports clk]
+    opt_design
+    place_design
+    route_design
+    set p [get_timing_paths -max_paths 1 -nworst 1 -setup]
+    set r [dict create \
+        wns  [get_property SLACK $p] \
+        lvl  [get_property LOGIC_LEVELS $p] \
+        lut  [llength [get_cells -hier -quiet -filter {PRIMITIVE_GROUP == LUT}]] \
+        ff   [llength [get_cells -hier -quiet -filter {PRIMITIVE_GROUP == FLOP_LATCH}]] \
+        dsp  [llength [get_cells -hier -quiet -filter {REF_NAME =~ DSP48*}]] \
+        path "[get_property STARTPOINT_PIN $p] -> [get_property ENDPOINT_PIN $p]"]
+    close_design
+    return $r
+}
+
+# Single-cycle baseline against the multi-cycle plant: timing and resources.
+proc tta_plant_compare {} {
+    set rows {}
+    foreach top {dc_motor_plant dc_motor_plant_mc} {
+        lappend rows $top [tta_plant_ooc $top]
+    }
+    puts [format "\n%-20s %9s %4s %6s %6s %4s" plant "WNS (ns)" lvl LUT FF DSP]
+    foreach {top r} $rows {
+        puts [format "%-20s %9s %4s %6s %6s %4s" $top [dict get $r wns] [dict get $r lvl] \
+            [dict get $r lut] [dict get $r ff] [dict get $r dsp]]
+    }
+    foreach {top r} $rows { puts "  $top worst path: [dict get $r path]" }
 }
 
 # One line per worst setup path: slack, logic levels, start -> end.

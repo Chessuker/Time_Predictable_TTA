@@ -19,15 +19,16 @@
 // 
 //////////////////////////////////////////////////////////////////////////////////
 
-// Arty A7-100T top level for Phase 2 bring-up.
+// Arty A7-100T top level: the core in its hardware-in-the-loop environment.
 //
 // Board-specific (pins, the 100 MHz oscillator, the active-low reset button);
 // everything under it is vendor-neutral. The code and data images are loaded
 // at synthesis from IMEM_INIT/DMEM_INIT ($readmemh, paths relative to the
 // directory Vivado runs in).
 //
-//   sw[3:0]   -> io.encoder (synchronised)       stand-in input for bring-up
-//   io.pwm_cmd[3:0] -> led[3:0]                  all four on when the core halts
+//   io.pwm_cmd -> hil_env (DC motor plant + load torque) -> io.encoder   (Phase 5)
+//   led[3] = load torque on, led[2:0] = encoder[11:9]; all four on when the core halts
+//   sw[3:0] is not used yet (planned: io.sw for interactive setpoints)
 //   telemetry -> UART TX (uart_rxd_out), 4 bytes per word, LSB first, 8N1
 //                at 100 MHz / CLKS_PER_BIT (about 3.03 Mbaud; open the port at 3,000,000)
 module arty_tta_top import tta_pkg::*; #(
@@ -57,23 +58,22 @@ module arty_tta_top import tta_pkg::*; #(
     rst <= rst_sync[1] || (por != 4'hF);
   end
 
-  (* ASYNC_REG = "TRUE" *) logic [3:0] sw_s1 = '0, sw_s2 = '0;
-  always_ff @(posedge clk) begin
-    sw_s1 <= sw;
-    sw_s2 <= sw_s1;
-  end
   /* verilator lint_on PROCASSINIT */
 
-  /* verilator lint_off UNUSEDSIGNAL */  // only pwm[3:0] reaches the LEDs
-  logic [31:0] pwm;
+  /* verilator lint_off UNUSEDSIGNAL */  // sw: reserved; encoder: only [11:9] reaches the LEDs
+  logic [3:0]  sw_unused;
+  logic [31:0] encoder;
   /* verilator lint_on UNUSEDSIGNAL */
-  logic [31:0] tx_data;
-  logic        tx_start, halted;
+  assign sw_unused = sw;
+  logic [31:0] pwm, tx_data;
+  logic        tx_start, halted, load_on;
+
+  hil_env u_env (.clk, .rst, .pwm_cmd(pwm), .encoder, .load_on);
 
   /* verilator lint_off PINCONNECTEMPTY */
   tta_core #(.IMEM_INIT(IMEM_INIT), .DMEM_INIT(DMEM_INIT)) u_core (
     .clk, .rst,
-    .io_encoder({28'b0, sw_s2}),
+    .io_encoder(encoder),
     .io_pwm_cmd(pwm),
     .telem_tx_start(tx_start),
     .telem_tx_data(tx_data),
@@ -87,5 +87,5 @@ module arty_tta_top import tta_pkg::*; #(
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
-  assign led = halted ? 4'hF : pwm[3:0];
+  assign led = halted ? 4'hF : {load_on, encoder[11:9]};
 endmodule

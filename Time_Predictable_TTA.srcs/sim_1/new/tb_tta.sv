@@ -32,6 +32,11 @@
 /* verilator lint_off UNUSEDSIGNAL */  // the testbench ignores some core outputs
 module tb_tta;
   import tta_pkg::*;
+`ifdef TTA_HIL
+  parameter int LOAD_PERIOD_C = 2_000_000;
+  parameter int LOAD_ON_C     = 600_000;
+  parameter int LOAD_OFF_C    = 1_100_000;
+`endif
 
   logic clk, rst;
   initial begin
@@ -83,10 +88,21 @@ module tb_tta;
     $fclose(fd);
   endtask
 
+`ifdef TTA_HIL
+  // closed loop: io.encoder comes from the plant (host/lockstep/runner.py run_hil);
+  // the load window is shortened so it falls inside a short simulation
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic load_on;
+  /* verilator lint_on UNUSEDSIGNAL */
+  hil_env #(.LOAD_PERIOD_C(LOAD_PERIOD_C), .LOAD_ON_C(LOAD_ON_C), .LOAD_OFF_C(LOAD_OFF_C)) u_env (
+    .clk, .rst, .pwm_cmd(io_pwm_cmd), .encoder(io_encoder), .load_on
+  );
+`else
   always_comb begin
     io_encoder = '0;
     foreach (stim_cycle[i]) if (stim_cycle[i] <= longint'(now)) io_encoder = stim_value[i];
   end
+`endif
 
   // ---------------------------------------------------------------- trace
   int     tf;

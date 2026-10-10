@@ -128,11 +128,14 @@ class Result:
 
 
 class Simulator:
-    def __init__(self, code, data=(), stim=None, imem_words=None, dmem_words=None):
+    def __init__(self, code, data=(), stim=None, imem_words=None, dmem_words=None, plant=None):
+        """plant: optional co-simulated plant (host/hil/env.PlantCosim); when
+        given, io.encoder reads plant.encoder(cycle, pwm_log) instead of stim."""
         self.imem = list(code)
         self.imem_words = imem_words or len(self.imem)
         self.dmem = list(data) + [0] * ((dmem_words or spec.DMEM_WORDS) - len(data))
         self.stim = stim or Stimulus()
+        self.plant = plant
         self.trace = []
 
         self.pc = 0
@@ -246,6 +249,8 @@ class Simulator:
         if n == "trap.epc":
             return self.epc
         if n == "io.encoder":
+            if self.plant is not None:
+                return self.plant.encoder(c, self.pwm_log) & M32
             return self.stim.value(n, c) & M32
         if n == "telem.drops":
             return self.telem.drops

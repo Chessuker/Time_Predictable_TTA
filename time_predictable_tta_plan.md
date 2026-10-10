@@ -242,13 +242,14 @@ Soft-core ทั่วไปบนบอร์ดเดียวกัน (เ�
 
 ### Phase 5 — HIL plant + control loop (สัปดาห์ 9–10)
 
-- [ ] Plant RTL จาก Python fixed-point model, ตรวจ step response ใน simulation ตรงกับ Python
-- [ ] IO FU เชื่อม plant
-- [ ] Control task เป็น TTA assembly พร้อม `@task` และ `@loop_bound`
-- [ ] TELEM FU + Python receiver + plot (position, command, t_sense/t_actuate)
-- [ ] Deadline trap test: จงใจยืด control law ให้เกิน deadline แล้วยืนยันว่า trap เกิดที่ cycle ที่ถูกต้อง
+- [x] Plant RTL จาก Python fixed-point model, ตรวจ step response ใน simulation ตรงกับ Python *(`dc_motor_plant_mc.sv` ตรงกับ `FixedPlant` ทุก bit; แบบ cycle เดียวเก็บไว้เป็น baseline, ดู design_decisions)*
+- [x] IO FU เชื่อม plant *(`hil_env.sv` ใน `arty_tta_top`: `io.pwm_cmd` → plant + แรงบิดโหลด → `io.encoder`)*
+- [x] Control task เป็น TTA assembly พร้อม `@task` และ `@loop_bound` *(`programs/control.tta` generate จาก `host/hil/programs.py`, เท่ากับ `FixedPID` ทุก period)*
+- [x] TELEM FU + Python receiver + plot (position, command, t_sense/t_actuate) *(`py -m host.hil.board COMx` เทียบทุกค่ากับ model แล้วเขียน CSV และ PNG)*
+- [x] Deadline trap test: จงใจยืด control law ให้เกิน deadline แล้วยืนยันว่า trap เกิดที่ cycle ที่ถูกต้อง *(`programs/control_trap.tta`: trap ที่ anchor + 2000 พอดี handler ที่ + 2003 ทั้ง ISS, lockstep และบอร์ด)*
+- [ ] ส่วนเสริม: สวิตช์บนบอร์ดเลือก setpoint และเปิดปิดโหลด (ต้องเพิ่ม port `io.sw` ใน ISA, ตัดสินใจ 2026-10-10 ให้ทำหลัง Done)
 
-**Done เมื่อ:** closed loop เสถียรบนบอร์ด, step response ตรงกับ Python model, WCET tool ยืนยันว่า control task อยู่ใต้ deadline
+**Done เมื่อ:** closed loop เสถียรบนบอร์ด, step response ตรงกับ Python model, WCET tool ยืนยันว่า control task อยู่ใต้ deadline *(ผ่านแล้ว 2026-10-11: บอร์ด 3,000 period ตรงกับ model ทุกค่า, sense/actuate ที่ anchor + 1 / + 1001 ทุก period, W = 90 จาก budget 999; timing WNS +0.406 ns)*
 
 ### Phase 6 — Baseline และ benchmark (สัปดาห์ 11)
 
