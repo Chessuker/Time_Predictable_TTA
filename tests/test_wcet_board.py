@@ -107,6 +107,55 @@ def test_a_wrong_cycle_count_is_not_a_pass(truth):
     assert not run(recs, truth)
 
 
+@pytest.mark.parametrize("size", [1, 2, 3, 5, 15, 16, 17, 31, 64, 4096])
+def test_any_chunk_size_gives_the_same_pass(truth, size):
+    recs = good_pass(truth[1])
+    lead = b"".join(good_pass(truth[1])[40:])[3:]          # start mid-record, mid-pass
+    data = lead + b"".join(recs)
+    chunks = [data[i:i + size] for i in range(0, len(data), size)]
+    static, iss = truth
+    assert wb.compare(wb.parse_pass(chunks), static, iss)[0]
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_random_chunk_boundaries_give_the_same_pass(truth, seed):
+    import random
+    rng = random.Random(seed)
+    data = b"".join(good_pass(truth[1]))
+    cuts = sorted(rng.sample(range(1, len(data)), rng.randint(1, 80)))
+    chunks = [data[a:b] for a, b in zip([0] + cuts, cuts + [len(data)])]
+    static, iss = truth
+    assert wb.compare(wb.parse_pass(chunks), static, iss)[0]
+
+
+def test_a_record_cut_short_at_the_end_fails(truth):
+    data = b"".join(good_pass(truth[1]))[:-6]              # last record only 10 of 16 bytes
+    with pytest.raises(wb.BoardError, match="ended after 47 of 48"):
+        wb.parse_pass([data])
+
+
+def test_a_corrupted_magic_word_mid_stream_fails(truth):
+    recs = good_pass(truth[1])
+    recs[30] = b"\x00" + recs[30][1:]
+    with pytest.raises(wb.BoardError, match="framing"):
+        run(recs, truth)
+
+
+def test_a_duplicated_dataset_inside_a_bench_fails(truth):
+    static, iss = truth
+    recs = good_pass(iss)
+    recs[11] = rec(1, 2, iss[(1, 2)])                      # bench 1 dataset 2 sent twice, 3 missing
+    with pytest.raises(wb.BoardError, match="expected bench 1, dataset 3"):
+        run(recs, truth)
+
+
+def test_noise_before_the_first_record_is_skipped_but_not_after(truth):
+    recs = good_pass(truth[1])
+    assert run(recs, truth, lead=b"\xff\x13\x00garbage")   # before sync: ignored
+    with pytest.raises(wb.BoardError, match="framing"):
+        run(recs[:5] + [b"garbage" + recs[5]] + recs[6:], truth)
+
+
 def test_compare_refuses_an_incomplete_record_set(truth):
     static, iss = truth
     board = dict(iss)
