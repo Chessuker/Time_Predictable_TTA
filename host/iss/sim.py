@@ -252,6 +252,8 @@ class Simulator:
             if self.plant is not None:
                 return self.plant.encoder(c, self.pwm_log) & M32
             return self.stim.value(n, c) & M32
+        if n == "io.din":
+            return self.stim.value(n, c) & M32
         if n == "telem.drops":
             return self.telem.drops
         raise AssertionError(n)

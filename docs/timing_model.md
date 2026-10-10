@@ -7,6 +7,7 @@
 **บันทึกการแก้หลัง freeze**
 - 2026-10-02: ตัวอย่างโค้ดใช้ `#label` สำหรับ label ที่ใช้เป็นค่า ตาม [asm_syntax.md](asm_syntax.md) แก้เฉพาะ syntax ของตัวอย่าง ไม่เปลี่ยน semantics หรือตัวเลข cycle
 - 2026-10-05: §1 เรื่อง trace เพิ่มว่า trap และ halt มี record ของตัวเอง และย้ายรูปแบบเต็มไปไว้ที่ toolchain_formats.md §6 ไม่เปลี่ยน semantics
+- 2026-10-10: isa.md เพิ่ม port `io.din` (`0x92`) และเปลี่ยน `SPEC_ID` เป็น `phase5-din-2026-10-10` กติกาเวลาในเอกสารนี้ไม่เปลี่ยน การอ่าน `io.din` เป็น move ธรรมดา 1 cycle และเป็น state port แบบเดียวกับ `io.encoder` (ไม่มี latency ให้รอ)
 
 เอกสารนี้คือสัญญาด้านเวลาที่ assembler, ISS, WCET tool และ RTL ต้องทำตามตรงกันทุก cycle ถ้า RTL ทำตามไม่ได้ ให้กลับมาแก้เอกสารนี้ก่อน ห้ามแก้ ISS ให้ตรงกับ RTL เงียบ ๆ
 

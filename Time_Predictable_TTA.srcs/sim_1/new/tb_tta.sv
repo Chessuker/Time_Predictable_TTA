@@ -44,7 +44,7 @@ module tb_tta;
     forever #5 clk = ~clk;
   end
 
-  logic [31:0] io_encoder, io_pwm_cmd, telem_tx_data;
+  logic [31:0] io_encoder, io_din, io_pwm_cmd, telem_tx_data;
   logic        telem_tx_start, halted;
   logic [63:0] now;
   logic        rv_valid, rv_imm, tr_valid, ht_valid;
@@ -54,14 +54,15 @@ module tb_tta;
   logic [1:0]  ht_reason;
 
   tta_core dut (
-    .clk, .rst, .io_encoder, .io_pwm_cmd, .telem_tx_start, .telem_tx_data, .halted,
+    .clk, .rst, .io_encoder, .io_din, .io_pwm_cmd, .telem_tx_start, .telem_tx_data, .halted,
     .dbg_now(now), .rv_valid, .rv_pc, .rv_word, .rv_imm, .rv_src, .rv_dst, .rv_value,
     .tr_valid, .tr_epc, .tr_cause, .ht_valid, .ht_reason
   );
 
   // ---------------------------------------------------------------- stimulus
-  longint      stim_cycle [$];
-  logic [31:0] stim_value [$];
+  // one list per input port; cycles of one port strictly increase (toolchain_formats.md sec. 6.4)
+  longint      enc_cycle [$], din_cycle [$];
+  logic [31:0] enc_value [$], din_value [$];
 
   task automatic load_stim(string path);
     int fd, n, line;
@@ -75,15 +76,21 @@ module tb_tta;
       n = $fscanf(fd, "%d %s %d\n", c, port, v);
       line++;
       if (n <= 0) continue;
-      if (n != 3 || port != "io.encoder") begin
-        $display("error: stim line %0d: expected '<cycle> io.encoder <value>'", line); $fatal(1);
+      if (n != 3 || (port != "io.encoder" && port != "io.din")) begin
+        $display("error: stim line %0d: expected '<cycle> <input port> <value>'", line); $fatal(1);
       end
-      if (c < 0 || (stim_cycle.size() > 0 && c <= stim_cycle[$])) begin
-        $display("error: stim line %0d: io.encoder cycle %0d is not after the previous one", line, c);
+      if (c < 0 || (port == "io.encoder" && enc_cycle.size() > 0 && c <= enc_cycle[$])
+                || (port == "io.din" && din_cycle.size() > 0 && c <= din_cycle[$])) begin
+        $display("error: stim line %0d: %s cycle %0d is not after the previous one", line, port, c);
         $fatal(1);
       end
-      stim_cycle.push_back(c);
-      stim_value.push_back(v[31:0]);
+      if (port == "io.encoder") begin
+        enc_cycle.push_back(c);
+        enc_value.push_back(v[31:0]);
+      end else begin
+        din_cycle.push_back(c);
+        din_value.push_back(v[31:0]);
+      end
     end
     $fclose(fd);
   endtask
@@ -100,9 +107,16 @@ module tb_tta;
 `else
   always_comb begin
     io_encoder = '0;
-    foreach (stim_cycle[i]) if (stim_cycle[i] <= longint'(now)) io_encoder = stim_value[i];
+    foreach (enc_cycle[i]) if (enc_cycle[i] <= longint'(now)) io_encoder = enc_value[i];
   end
 `endif
+
+  // io.din comes from the stimulus in both builds (the board's synchroniser and
+  // debounce are outside the core and have their own testbench)
+  always_comb begin
+    io_din = '0;
+    foreach (din_cycle[i]) if (din_cycle[i] <= longint'(now)) io_din = din_value[i];
+  end
 
   // ---------------------------------------------------------------- trace
   int     tf;

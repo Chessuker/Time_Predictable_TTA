@@ -26,7 +26,7 @@
 /* verilator lint_off UNUSEDPARAM */
 package tta_pkg;
 
-  localparam string SPEC_ID = "phase0-frozen-2026-10-02";
+  localparam string SPEC_ID = "phase5-din-2026-10-10";
 
   // ---- instruction format (isa.md sec. 1)
   localparam int WORD_W   = 32;
@@ -99,6 +99,7 @@ package tta_pkg;
   localparam port_id_t P_TRAP_T_HALT   = 8'h83;
   localparam port_id_t P_IO_ENCODER    = 8'h90;
   localparam port_id_t P_IO_PWM_CMD    = 8'h91;
+  localparam port_id_t P_IO_DIN        = 8'h92;
   localparam port_id_t P_TELEM_T_PUSH  = 8'hA0;
   localparam port_id_t P_TELEM_DROPS   = 8'hA1;
   localparam port_id_t P_NULL          = 8'hFF;
@@ -173,6 +174,7 @@ package tta_pkg;
       P_TRAP_CAUSE: return 1'b1;
       P_TRAP_EPC: return 1'b1;
       P_IO_ENCODER: return 1'b1;
+      P_IO_DIN: return 1'b1;
       P_TELEM_DROPS: return 1'b1;
       default: return 1'b0;
     endcase

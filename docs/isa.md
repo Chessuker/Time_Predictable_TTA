@@ -5,6 +5,7 @@
 **บันทึกการแก้หลัง freeze**
 - 2026-10-02: ตัวอย่างโค้ดใช้ `#label` สำหรับ label ที่ใช้เป็นค่า ตาม [asm_syntax.md](asm_syntax.md) แก้เฉพาะ syntax ของตัวอย่าง ไม่เปลี่ยน semantics
 - 2026-10-05: §6 ระบุว่า cause 5 ตรวจเฉพาะ jump ที่ taken เป็นการระบุกรณีที่เดิมไม่ได้เขียนไว้ ไม่ขัดกับความหมายเดิม จึงไม่เปลี่ยน `SPEC_ID`
+- 2026-10-10: §2 และ §3 เพิ่ม port `io.din` (`0x92`) สำหรับ input ภายนอกแบบดิจิทัล ใช้กับ switch mode ของ HIL และเป็น interface ทั่วไปสำหรับ input ของ controller ในอนาคต เซตของ encoding ที่ legal เปลี่ยน จึงเปลี่ยน `SPEC_ID` เป็น `phase5-din-2026-10-10` โปรแกรมเดิมทุกตัวยัง assemble ได้ word เท่าเดิม เพราะไม่มีโปรแกรมใดใช้ `0x92` ได้มาก่อน (เป็น illegal) เหตุผลอยู่ใน §12 ข้อ 11
 
 เอกสารนี้กำหนดสิ่งที่ software มองเห็น ได้แก่ encoding, port และ semantics ส่วนเวลาของทุกอย่างอยู่ใน [timing_model.md](timing_model.md) ซึ่งถือเป็นสัญญาเดียวกัน ถ้าสองเอกสารขัดกันให้ถือว่าเป็นบั๊กของ spec
 
@@ -101,6 +102,7 @@ port ID กว้าง 8 bit ใช้ namespace เดียวกันทั
 | `0x83` | `trap.t_halt` | W/T | หยุด core |
 | `0x90` | `io.encoder` | R | encoder count (signed 32 bit) |
 | `0x91` | `io.pwm_cmd` | W | คำสั่ง PWM (signed, ±2047 ใช้ได้) |
+| `0x92` | `io.din` | R | input ภายนอกแบบดิจิทัล 32 bit, bit ที่ไม่ได้ต่อเป็น 0 |
 | `0xA0` | `telem.t_push` | W/T | ใส่ word ลง FIFO ไม่ block |
 | `0xA1` | `telem.drops` | R | จำนวน word ที่ถูกทิ้งเพราะ FIFO เต็ม |
 | `0xFF` | `null` | W | ค่าที่เขียนถูกทิ้ง ใช้ทำ nop |
@@ -122,6 +124,7 @@ ID ที่ไม่อยู่ในตารางเป็น illegal ท�
 **IO** เชื่อมกับ plant ใน HIL demo
 - `io.encoder` ให้ค่า encoder ณ ต้น cycle ที่อ่าน plant step ที่ cycle ก่อนหน้าจะเห็นผลแล้ว (ตรงกับ [plant model](../host/plant_model/README.md))
 - ค่าที่เขียนลง `io.pwm_cmd` ที่ cycle `c` มีผลกับ plant ตั้งแต่ cycle `c + 1` ถ้าค่าเกิน ±2047 ฝั่ง plant จะ clip ให้ แต่ controller ควร saturate เองอยู่แล้ว
+- `io.din` ให้ค่าที่อยู่บน input ของ core ณ ต้น cycle ที่อ่าน เหมือน `io.encoder` ถ้าค่าใหม่ปรากฏตั้งแต่ cycle `c` move ที่อ่านที่ cycle `r ≥ c` เห็นค่าใหม่ ส่วน move ที่ `r < c` เห็นค่าเดิม core ไม่ sample หรือกรองค่าเอง การกัน metastability, debounce และความหมายของแต่ละ bit เป็นหน้าที่ของ interface ฝั่งบอร์ด (*เพิ่ม 2026-10-10*)
 
 **TELEM**
 - `telem.t_push` ใส่ word 32 bit ลง FIFO ที่ส่งออก UART ใช้ 1 cycle เสมอ ไม่ว่า FIFO จะเต็มหรือไม่
@@ -312,3 +315,4 @@ semantics และเวลาของทุก operation อยู่ใน t
 8. **[ยืนยัน] TELEM ใช้ `t_push` ตัวเดียว** กับตัวนับ `drops` ไม่มี port `data` แยก
 9. **[ยืนยัน] Layout ของ `tmr.flags`** และไม่ทำ `elapsed_sat`
 10. **[ยืนยัน] Trap:** `handler = 0` แปลว่า halt, Phase 1 ไม่มี return, มี `trap.t_halt`, double fault ทำให้ halt
+11. **[ยืนยัน 2026-10-10, หลัง freeze] `io.din` ที่ `0x92`** เป็น input อ่านอย่างเดียวที่ไม่ผูกกับอุปกรณ์ใด (สวิตช์บน Arty เป็นแค่ผู้ใช้รายแรก) ใช้ semantics เดียวกับ `io.encoder` เพื่อให้กติกาเวลาทั้งหมดไม่เปลี่ยน synchronizer และ debounce อยู่นอก core เพราะเป็นเรื่องของบอร์ด และทำให้ spec ไม่ผูกกับ vendor การเขียนลง port นี้เป็น illegal port (cause 2) เหมือน port อ่านอย่างเดียวตัวอื่น

@@ -74,6 +74,7 @@ module arty_tta_top import tta_pkg::*; #(
   tta_core #(.IMEM_INIT(IMEM_INIT), .DMEM_INIT(DMEM_INIT)) u_core (
     .clk, .rst,
     .io_encoder(encoder),
+    .io_din('0),                        // board input interface: next commit
     .io_pwm_cmd(pwm),
     .telem_tx_start(tx_start),
     .telem_tx_data(tx_data),

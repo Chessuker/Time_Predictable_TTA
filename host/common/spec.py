@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 # Bump whenever encoding, semantics or timing change (toolchain_formats.md §3.1).
-SPEC_ID = "phase0-frozen-2026-10-02"
+SPEC_ID = "phase5-din-2026-10-10"
 
 # ---- instruction format (isa.md §1) ----
 WORD_BITS = 32
@@ -90,6 +90,7 @@ def _ports() -> tuple[Port, ...]:
         Port(0x83, "trap.t_halt", writable=True, trigger=True),
         Port(0x90, "io.encoder", readable=True),
         Port(0x91, "io.pwm_cmd", writable=True),
+        Port(0x92, "io.din", readable=True),
         Port(0xA0, "telem.t_push", writable=True, trigger=True),
         Port(0xA1, "telem.drops", readable=True),
         Port(0xFF, "null", writable=True),

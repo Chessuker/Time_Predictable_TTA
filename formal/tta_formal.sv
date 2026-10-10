@@ -13,23 +13,34 @@
 //      nothing retires before exp_at, something retires or
 //      traps at exp_at, and trap.epc is the move that was due
 //   A3 deadline trap iff armed and now >= deadline            (R6)
-//   A4 tmr.elapsed and tmr.flags read the model's values      (R5)
+//   A4 tmr.elapsed and tmr.flags read the model's values,     (R5)
+//      io.encoder and io.din read their input of that cycle   (isa.md sec. 3)
 //   A5 halt: no event after it, and it happens exactly when   (isa.md sec. 9)
 //      t_halt retires or a trap finds handler = 0 / trapped
 //   A6 FU outputs change only after their own trigger         (R2)
 // Invariants (I*) tie the model to the core's state; k-induction needs them.
 //
+// Free values. yosys-slang ignores (* anyseq *) on internal variables and
+// elaborates an undriven variable as a 32'x constant at each place it is
+// used; sby's prep (setundef -undriven -anyseq) then gives every such use its
+// own $anyseq. A signal read in one place is therefore free every step, but
+// two readers of one undriven signal see unrelated values. So the IO inputs
+// are ports of this module (one free value per step for every reader), and
+// the memory stand-in reads its undriven word in exactly one place. Covers
+// C8-C10 check that these values do change from read to read.
+//
 // Assumptions are the program rules the assembler already enforces:
 //   S3  t_advance never executes while armed (timing_model.md sec. 4)
 //   R7  now does not wrap (bounded at 2^62, i.e. ~1,461 years at 100 MHz)
 module tta_formal import tta_pkg::*; (
-  input logic clk
+  input logic        clk,
+  input logic [31:0] io_encoder,         // free every step (see "Free values")
+  input logic [31:0] io_din
 );
   // ---------------------------------------------------------------- DUT
   logic rst = 1'b1;                      // reset in the first cycle only
   always_ff @(posedge clk) rst <= 1'b0;
 
-  (* anyseq *) logic [31:0] io_encoder;
 
   logic [31:0] io_pwm_cmd, telem_tx_data, rv_pc, rv_word, rv_value, tr_epc;
   logic        telem_tx_start, halted, rv_valid, rv_imm, tr_valid, ht_valid;
@@ -39,7 +50,7 @@ module tta_formal import tta_pkg::*; (
   logic [1:0]  ht_reason;
 
   tta_core u_core (
-    .clk, .rst, .io_encoder, .io_pwm_cmd, .telem_tx_start, .telem_tx_data, .halted,
+    .clk, .rst, .io_encoder, .io_din, .io_pwm_cmd, .telem_tx_start, .telem_tx_data, .halted,
     .dbg_now, .rv_valid, .rv_pc, .rv_word, .rv_imm, .rv_src, .rv_dst, .rv_value,
     .tr_valid, .tr_epc, .tr_cause, .ht_valid, .ht_reason
   );
@@ -142,6 +153,10 @@ module tta_formal import tta_pkg::*; (
         assert (rv_value == elapsed_ref);
       if (ret && !rv_imm && rv_src == P_TMR_FLAGS)
         assert (rv_value == {29'b0, trapped_r, armed_r, late_r});
+      if (ret && !rv_imm && rv_src == P_IO_ENCODER)                          // A4: IO inputs (isa.md sec. 3),
+        assert (rv_value == io_encoder);                                     //  value at the start of the cycle
+      if (ret && !rv_imm && rv_src == P_IO_DIN)
+        assert (rv_value == io_din);
 
       assert (halted == halted_r);                                           // A5
       if (halted_r) assert (!ret && !trp && !ht_valid);
@@ -181,7 +196,7 @@ module tta_formal import tta_pkg::*; (
   end
 
   // ---------------------------------------------------------------- invariants for k-induction
-  localparam int SEL_IMM = 0, SEL_ELAPSED = 9, SEL_FLAGS = 10;   // S_IMM, S_ELAPSED, S_FLAGS
+  localparam int SEL_IMM = 0, SEL_ELAPSED = 9, SEL_FLAGS = 10, SEL_ENC = 14, SEL_DIN = 15;
   always_comb begin
     if (!rst) begin
       assert (u_core.now == now_r);
@@ -234,7 +249,10 @@ module tta_formal import tta_pkg::*; (
         assert (u_core.x_sel[SEL_IMM] == u_core.x_imm);
         assert (u_core.x_sel[SEL_ELAPSED] == (!u_core.x_imm && u_core.x_src == P_TMR_ELAPSED));
         assert (u_core.x_sel[SEL_FLAGS]   == (!u_core.x_imm && u_core.x_src == P_TMR_FLAGS));
-        if (u_core.x_sel[SEL_ELAPSED] || u_core.x_sel[SEL_FLAGS])
+        assert (u_core.x_sel[SEL_ENC]     == (!u_core.x_imm && u_core.x_src == P_IO_ENCODER));
+        assert (u_core.x_sel[SEL_DIN]     == (!u_core.x_imm && u_core.x_src == P_IO_DIN));
+        if (u_core.x_sel[SEL_ELAPSED] || u_core.x_sel[SEL_FLAGS] || u_core.x_sel[SEL_ENC]
+            || u_core.x_sel[SEL_DIN])
           assert ($onehot(u_core.x_sel));
       end
     end
@@ -243,11 +261,22 @@ module tta_formal import tta_pkg::*; (
   // ---------------------------------------------------------------- covers
   logic [63:0] last_ret_at;
   logic        last_was_timing;
+  logic [31:0] last_word, last_enc, last_load;
+  logic        enc_seen, load_seen;
   always_ff @(posedge clk) begin
     if (rst) begin
-      last_ret_at <= '0; last_was_timing <= 1'b0;
-    end else if (ret) begin
-      last_ret_at <= now_r; last_was_timing <= is_timing;
+      last_ret_at <= '0; last_was_timing <= 1'b0; last_word <= '0;
+      last_enc <= '0; enc_seen <= 1'b0; last_load <= '0; load_seen <= 1'b0;
+    end else begin
+      if (ret) begin
+        last_ret_at <= now_r; last_was_timing <= is_timing; last_word <= rv_word;
+      end
+      if (ret && !rv_imm && rv_src == P_IO_ENCODER) begin
+        last_enc <= rv_value; enc_seen <= 1'b1;
+      end
+      if (ret && !rv_imm && rv_src == P_MEM_DATA_OUT) begin
+        last_load <= rv_value; load_seen <= 1'b1;
+      end
     end
   end
 
@@ -259,6 +288,13 @@ module tta_formal import tta_pkg::*; (
       cover (u_core.u_tmr.late);                                     // C4 late
       cover (ret && rv_dst == P_TMR_T_CLEAR && armed_r && now_r + 1 == deadline_r);  // C5 clear just in time
       cover (ret && trapped_r && rv_pc == handler_r);                // C6 first move of a handler
+      cover (ret && !rv_imm && rv_src == P_IO_DIN && rv_value != '0); // C7 io.din read with a nonzero input
+      // the free values really are free per read (not one value per run, not 0)
+      cover (ret && now_r == last_ret_at + 1 && rv_word != last_word);                     // C8 code
+      cover (ret && !rv_imm && rv_src == P_MEM_DATA_OUT && load_seen && rv_value != last_load
+             && rv_value != '0 && last_load != '0);                                          // C9 data
+      cover (ret && !rv_imm && rv_src == P_IO_ENCODER && enc_seen && rv_value != last_enc
+             && rv_value != '0 && last_enc != '0);                                           // C10 io.encoder
     end
   end
 endmodule
