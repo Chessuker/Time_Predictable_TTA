@@ -102,7 +102,7 @@ module tb_tta;
   logic load_on;
   /* verilator lint_on UNUSEDSIGNAL */
   hil_env #(.LOAD_PERIOD_C(LOAD_PERIOD_C), .LOAD_ON_C(LOAD_ON_C), .LOAD_OFF_C(LOAD_OFF_C)) u_env (
-    .clk, .rst, .pwm_cmd(io_pwm_cmd), .encoder(io_encoder), .load_on
+    .clk, .rst, .pwm_cmd(io_pwm_cmd), .load_sw(1'b0), .encoder(io_encoder), .load_on
   );
 `else
   always_comb begin

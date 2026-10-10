@@ -24,6 +24,8 @@
 // during [LOAD_ON, LOAD_OFF) of every LOAD_PERIOD cycles. Counted from reset
 // like the core's now, so host/hil/env.py reproduces it cycle for cycle.
 // The load window can be shortened for simulation through the parameters.
+// load_sw (the debounced load switch, board_din.sv) also turns the load on;
+// with it at 0 the environment is exactly the Phase 5 one.
 module hil_env import plant_pkg::*; #(
   parameter int LOAD_PERIOD_C = LOAD_PERIOD,
   parameter int LOAD_ON_C     = LOAD_ON,
@@ -32,6 +34,7 @@ module hil_env import plant_pkg::*; #(
   input  logic        clk,
   input  logic        rst,
   input  logic [31:0] pwm_cmd,         // io.pwm_cmd of the core
+  input  logic        load_sw,         // switch-mode load, already debounced
   output logic [31:0] encoder,         // to io.encoder of the core
   output logic        load_on
 );
@@ -42,7 +45,7 @@ module hil_env import plant_pkg::*; #(
     if (rst) lc <= '0;
     else     lc <= (lc == LW'(LOAD_PERIOD_C - 1)) ? '0 : lc + 1'b1;
   end
-  assign load_on = lc >= LW'(LOAD_ON_C) && lc < LW'(LOAD_OFF_C);
+  assign load_on = (lc >= LW'(LOAD_ON_C) && lc < LW'(LOAD_OFF_C)) || load_sw;
 
   logic signed [31:0] tau, enc;
   assign tau = load_on ? 32'(LOAD_TAU) : '0;

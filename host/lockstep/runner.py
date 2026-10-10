@@ -28,7 +28,8 @@ CORE_SOURCES = [f"{DESIGN_DIR}/{f}" for f in (
     "tta_pkg.sv", "tta_sram_1r1w.sv", "fu_alu.sv", "fu_mul.sv", "fu_tmr.sv", "fu_telem.sv",
     "tta_core.sv")]
 HIL_SOURCES = [f"{DESIGN_DIR}/{f}" for f in ("plant_pkg.sv", "dc_motor_plant_mc.sv", "hil_env.sv")]
-BOARD_SOURCES = CORE_SOURCES + HIL_SOURCES + [f"{DESIGN_DIR}/uart_tx_word.sv", f"{DESIGN_DIR}/arty_tta_top.sv"]
+BOARD_SOURCES = CORE_SOURCES + HIL_SOURCES + [f"{DESIGN_DIR}/uart_tx_word.sv", f"{DESIGN_DIR}/din_debounce.sv", f"{DESIGN_DIR}/board_din.sv",
+                                              f"{DESIGN_DIR}/arty_tta_top.sv"]
 RTL_SOURCES = CORE_SOURCES + [f"{SIM_DIR}/tb_tta.sv"]
 
 

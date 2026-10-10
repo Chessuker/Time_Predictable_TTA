@@ -14,6 +14,9 @@ set_property -dict { PACKAGE_PIN C11 IOSTANDARD LVCMOS33 } [get_ports { sw[1] }]
 set_property -dict { PACKAGE_PIN C10 IOSTANDARD LVCMOS33 } [get_ports { sw[2] }]
 set_property -dict { PACKAGE_PIN A10 IOSTANDARD LVCMOS33 } [get_ports { sw[3] }]
 
+## Push button BTN0 (active high): commits sw[1:0] to io.din[1:0]
+set_property -dict { PACKAGE_PIN D9  IOSTANDARD LVCMOS33 } [get_ports { btn0 }]
+
 ## Green LEDs LD4..LD7
 set_property -dict { PACKAGE_PIN H5  IOSTANDARD LVCMOS33 } [get_ports { led[0] }]
 set_property -dict { PACKAGE_PIN J5  IOSTANDARD LVCMOS33 } [get_ports { led[1] }]
@@ -24,7 +27,7 @@ set_property -dict { PACKAGE_PIN T10 IOSTANDARD LVCMOS33 } [get_ports { led[3] }
 set_property -dict { PACKAGE_PIN D10 IOSTANDARD LVCMOS33 } [get_ports { uart_rxd_out }]
 
 ## Asynchronous inputs go through 2-FF synchronisers in the top level.
-set_false_path -from [get_ports { ck_rst sw[*] }]
+set_false_path -from [get_ports { ck_rst sw[*] btn0 }]
 ## LEDs and the UART line are slow outputs with no timing relationship to care about.
 set_false_path -to [get_ports { led[*] uart_rxd_out }]
 

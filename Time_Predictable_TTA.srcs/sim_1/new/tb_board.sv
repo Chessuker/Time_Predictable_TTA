@@ -8,12 +8,20 @@
 //   D <drops>             telem.drops
 // tests/test_rtl_units.py compares these with the ISS telemetry model.
 //
+// Board inputs (switch mode): +pins=<file> with lines "<now> sw <0..15>" or
+// "<now> btn <0|1>"; a pin given for cycle c is set in the middle of cycle c.
+// Then it also prints
+//   I <cycle> <din>       io.din at the core input changes (board_din output)
+//   P <cycle> <pwm>       io.pwm_cmd at the core output changes
+//
 // Plusargs: +max=<cycles of now to run>. The code and data images come in
-// through the IMEM_INIT/DMEM_INIT parameters (verilator -G).
+// through the IMEM_INIT/DMEM_INIT parameters (verilator -G), the debounce
+// length through N_DB.
 module tb_board;
   import tta_pkg::*;
   parameter string IMEM_INIT = "";
   parameter string DMEM_INIT = "";
+  parameter int    N_DB      = 500_000;
   localparam int     CPB_I = TELEM_CYCLES_PER_WORD / 40;
   localparam longint CPB   = longint'(CPB_I);
 
@@ -27,9 +35,11 @@ module tb_board;
   logic [3:0] led;
   /* verilator lint_on UNUSEDSIGNAL */
   logic       txd;
+  logic [3:0] sw = '0;
+  logic       btn0 = 1'b0;
 
-  arty_tta_top #(.IMEM_INIT(IMEM_INIT), .DMEM_INIT(DMEM_INIT)) dut (
-    .CLK100MHZ(clk), .ck_rst(1'b1), .sw(4'b0), .led, .uart_rxd_out(txd)
+  arty_tta_top #(.IMEM_INIT(IMEM_INIT), .DMEM_INIT(DMEM_INIT), .N_DB(N_DB)) dut (
+    .CLK100MHZ(clk), .ck_rst(1'b1), .sw, .btn0, .led, .uart_rxd_out(txd)
   );
 
   // Everything is sampled on the falling edge, where now and txd both hold
@@ -44,6 +54,51 @@ module tb_board;
 
   int   errors = 0;
   logic txd_prev = 1'b1;
+
+  // ---- board inputs from +pins, and the IO seen by the core
+  longint     sw_c [$], btn_c [$];
+  logic [3:0] sw_v [$];
+  logic       btn_v [$];
+
+  task automatic load_pins(string path);
+    int fd, n, line;
+    longint c;
+    /* verilator lint_off UNUSEDSIGNAL */
+    longint v;                          // only the low bits are pin values
+    /* verilator lint_on UNUSEDSIGNAL */
+    string pin;
+    fd = $fopen(path, "r");
+    if (fd == 0) begin $display("error: cannot open pins %s", path); $fatal(1); end
+    line = 0;
+    while (!$feof(fd)) begin
+      n = $fscanf(fd, "%d %s %d\n", c, pin, v);
+      line++;
+      if (n <= 0) continue;
+      if (n != 3 || (pin != "sw" && pin != "btn")) begin
+        $display("error: pins line %0d", line); $fatal(1);
+      end
+      if (pin == "sw") begin sw_c.push_back(c); sw_v.push_back(v[3:0]); end
+      else begin btn_c.push_back(c); btn_v.push_back(v[0]); end
+    end
+    $fclose(fd);
+  endtask
+
+  initial begin : io
+    string       path;
+    logic [31:0] din_prev, pwm_prev;
+    din_prev = '0;
+    pwm_prev = '0;
+    if ($value$plusargs("pins=%s", path)) load_pins(path);
+    wait (!dut.rst);
+    forever begin
+      @(negedge clk);
+      foreach (sw_c[i]) if (sw_c[i] <= now()) sw = sw_v[i];
+      foreach (btn_c[i]) if (btn_c[i] <= now()) btn0 = btn_v[i];
+      if (dut.din !== din_prev) $display("I %0d %0d", now(), dut.din);
+      if (dut.pwm !== pwm_prev) $display("P %0d %0d", now(), dut.pwm);
+      din_prev = dut.din; pwm_prev = dut.pwm;
+    end
+  end
 
   initial begin : decode
     forever begin
