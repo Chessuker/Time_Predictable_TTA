@@ -10,8 +10,9 @@ both sides start from the same state. Every period the board sends
     MAGIC, k, setpoint, encoder, pwm_cmd, elapsed after sense, elapsed after actuate, flags
 (host/hil/programs.py). The script runs the same program on the ISS with the
 co-simulated plant (which tests/test_hil.py ties to FixedPID + FixedPlant) and
-requires every field of every period to match exactly. With --trap it also
-requires the trap record (cause, epc, elapsed at the handler, period).
+requires every field of every period to match exactly. With --trap it requires
+exactly TRAP_K periods (0..TRAP_K-1), all equal to the model, followed directly
+by the trap record for period TRAP_K (cause, epc, elapsed at the handler).
 
 Output: build/hil/<program>.csv and, if matplotlib is installed, <program>.png
 (setpoint and encoder, pwm_cmd, the load window).
@@ -40,7 +41,9 @@ def parse_stream(chunks, n_periods, trap):
     Before period 0 the stream may hold anything (an earlier run, a word cut
     by the reset), so the reader resynchronises on the magic words until it
     sees period 0. From then on it is strict: records back to back, k counting
-    up by one, nothing else, until n periods (or the trap record) are in."""
+    up by one, nothing else, until n periods are in. With trap the board must
+    send exactly n periods (0..n-1) and then the trap record for period n; a
+    trap record anywhere else, or a period past n-1, is an error."""
     magic = struct.pack("<I", P.MAGIC)
     tmagic = struct.pack("<I", P.TRAP_MAGIC)
     buf, started, periods = bytearray(), False, []
@@ -72,6 +75,9 @@ def parse_stream(chunks, n_periods, trap):
                 p = p[0]
                 if p.k != len(periods):
                     raise BoardError(f"expected period {len(periods)}, got {p.k}")
+                if len(periods) == n_periods:
+                    raise BoardError(f"period {p.k} arrived where the trap record for "
+                                     f"period {n_periods} should be")
                 periods.append(p)
                 if len(periods) == n_periods and not trap:
                     return periods, None
@@ -80,7 +86,16 @@ def parse_stream(chunks, n_periods, trap):
                     break
                 words = struct.unpack("<5I", bytes(buf[:20]))
                 _, traps = M.parse(list(words))
-                return periods, traps[0]
+                t = traps[0]
+                if not trap:
+                    raise BoardError(f"trap record after period {len(periods) - 1} "
+                                     f"in a run without a trap: {t}")
+                if len(periods) != n_periods:
+                    raise BoardError(f"trap record after {len(periods)} periods, "
+                                     f"expected {n_periods}: {t}")
+                if t.k != n_periods:
+                    raise BoardError(f"trap record names period {t.k}, expected {n_periods}")
+                return periods, t
             else:
                 raise BoardError(f"lost framing after period {len(periods) - 1}: 0x{head.hex()}")
     raise BoardError(f"the stream ended after {len(periods)} periods")
@@ -110,6 +125,23 @@ def compare(board, expected):
     if len(board) != len(expected):
         out.append(f"board has {len(board)} periods, model {len(expected)}")
     return out
+
+
+def check(board, trap, exp, n_periods, trap_mode):
+    """The whole run against the model: periods 0..n-1 field by field and, with
+    trap_mode, the single trap record that must follow them. Empty when equal."""
+    diffs = compare(board, exp.periods[:n_periods])
+    if len(exp.periods) < n_periods:
+        diffs.append(f"the model has only {len(exp.periods)} periods, expected {n_periods}")
+    if trap_mode:
+        if len(exp.traps) != 1 or exp.traps[0].k != n_periods:
+            diffs.append(f"the model's trap records are {exp.traps}, expected one for "
+                         f"period {n_periods}")
+        elif trap != exp.traps[0]:
+            diffs.append(f"trap record: board {trap}, model {exp.traps[0]}")
+    elif trap is not None:
+        diffs.append(f"trap record in a run without a trap: {trap}")
+    return diffs
 
 
 def save(name, periods, c_sync):
@@ -170,20 +202,17 @@ def main(argv=None):
         print("needs pyserial: py -m pip install pyserial", file=sys.stderr)
         return 1
     name = "control_trap" if args.trap else "control"
-    n = P.TRAP_K + 1 if args.trap else args.periods
+    # with --trap: periods 0..TRAP_K-1, then the trap record for period TRAP_K
+    n = P.TRAP_K if args.trap else args.periods
     print(f"model: running {name}.tta on the ISS ...")
-    exp = M.run_iss(n, trap=args.trap)
+    exp = M.run_iss(n + 1 if args.trap else n, trap=args.trap)
     print(f"listening on {args.port}: press RESET on the board now")
     try:
         board, trap = parse_stream(serial_chunks(args.port, args.baud), n, args.trap)
     except BoardError as e:
         print(f"FAIL: {e}")
         return 1
-    diffs = compare(board, exp.periods[:len(board)])
-    if args.trap:
-        want = exp.traps[0] if exp.traps else None
-        if trap != want:
-            diffs.append(f"trap record: board {trap}, model {want}")
+    diffs = check(board, trap, exp, n, args.trap)
     csv_path, png = save(name, board, exp.c_sync)
     print(f"{len(board)} periods compared field by field")
     print(f"  sense at anchor + {sorted({p.el_sense - 1 for p in board})}, "
