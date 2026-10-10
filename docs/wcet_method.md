@@ -39,7 +39,20 @@ subject to  x(source) = 1, x(sink) = 1
             x(header) ≤ N · x(edge ที่เข้า loop จากข้างนอก)      สำหรับ @loop_bound N
 ```
 
-แก้ด้วย `scipy.optimize.milp` (HiGHS) ทำ ILP แยกทุกคู่ของจุดเริ่มกับจุดจบ ผลที่ได้เป็นจำนวนครั้งต่อ edge จากนั้น tool เรียงกลับเป็น **witness path** (Hierholzer) เพื่อให้รู้ว่าต้องป้อน input แบบไหนจึงจะวิ่งไปตาม path ที่ยาวที่สุด
+แก้ด้วย `scipy.optimize.milp` (HiGHS) ทำ ILP แยกทุกคู่ของจุดเริ่มกับจุดจบ ผลที่ได้เป็นจำนวนครั้งต่อ edge
+
+**Witness path:** tool เรียงจำนวนครั้งต่อ edge กลับเป็น path จริงหนึ่งเส้น เพื่อให้รู้ว่าต้องป้อน input แบบไหนจึงจะวิ่งไปตาม path ที่ยาวที่สุด เก็บเป็นลำดับของ edge ไม่ใช่ address เพราะ jump ที่มีเงื่อนไขและ target เป็นคำสั่งถัดไป จะมี edge สองเส้นที่ cost ต่างกันระหว่างคู่ address เดียวกัน
+
+constraint ของ loop ใน ILP เป็นแบบรวม การเดินแบบ Hierholzer ธรรมดาจึงอาจให้ entry หนึ่งของ loop ในวิ่งเกิน N รอบ แล้วอีก entry วิ่งน้อยกว่า ได้จำนวนครั้งและ cost ถูก แต่เป็น path ที่เกิดจริงไม่ได้ tool จึงแบ่งรอบให้แต่ละ entry อย่างสมดุล คือ `ceil(H / E)` จากจำนวน header ที่เหลือ H และ entry ที่เหลือ E ค่านี้ไม่เกิน N เพราะ ILP บังคับ `H ≤ N·E` ไว้แล้ว
+
+หลังสร้างเสร็จ tool ตรวจ witness ทุกเส้นซ้ำ ถ้าข้อใดไม่ผ่านเป็น internal error ไม่มีทางกลายเป็นผลที่ผิดแบบเงียบๆ:
+- เริ่มที่ source และจบที่ sink
+- ทุก edge ต่อกันและมีอยู่จริงใน CFG
+- จำนวนครั้งต่อ edge ตรงกับคำตอบของ ILP
+- cost เท่ากับค่า objective
+- ไม่มี loop ไหนวิ่งเกิน bound ใน entry ใด entry หนึ่ง
+
+`tests/test_wcet_review.py` ยืนยันด้วยว่า witness ของโปรแกรมทดสอบทุกตัว (รวม bubble sort และ loop ซ้อน) ตรงกับลำดับ PC ที่ ISS รันจริงเมื่อใช้ worst-case input ทีละตำแหน่ง
 
 **Loop:** หา natural loop จาก back edge (edge ที่ปลายทาง dominate ต้นทาง)
 - header ของ loop ต้องมี `@loop_bound` (S6) ถ้าไม่มีจะเป็น error
@@ -63,9 +76,16 @@ segment ที่จบที่ sync point ซึ่ง v เป็น immediat
 
 ตัวอย่าง 3 ของ timing_model §5 ได้ W = 625 และ Δ = 999 ตรงกับที่นับด้วยมือ
 
-## 5. ข้อจำกัด
+## 5. ความหมายของตัวเลขและข้อจำกัด
 
-- **loop bound เป็นเงื่อนไขของ input:** ถ้าข้อมูลทำให้ loop วิ่งเกิน `@loop_bound` เวลาที่วัดได้จะเกิน WCET เช่น `fib` ใน benchmark รับ n ได้แค่ 1–20
+**W เป็นขอบบนที่ปลอดภัย (safe upper bound) เสมอ** ภายใต้เงื่อนไขที่ tool พิมพ์ไว้ในบรรทัด `valid if` ของแต่ละ segment ได้แก่
+- loop ทุกตัวที่ segment อาจวิ่งผ่าน รวม loop ใน callee ต้องวิ่ง header ไม่เกิน N ครั้งต่อการเข้า loop หนึ่งครั้ง
+- loop ที่ไม่อยู่บน worst path ก็นับเป็นเงื่อนไขด้วย เพราะถ้ามันวิ่งเกิน bound path ที่ผ่านมันอาจยาวกว่า W
+- ไม่มี trap เกิดใน segment และทุก move ถูกกติกา (ผ่าน S1–S7)
+
+**W เป็นค่า tight** คือมี input ที่ใช้เวลา W พอดี ก็ต่อเมื่อ witness path เกิดได้จริง tool ไม่ได้ตรวจ feasibility ของ path ถ้ามี branch ที่เงื่อนไขขัดกันเอง W จะสูงกว่าความจริงได้แต่ไม่มีทางต่ำกว่า วิธียืนยันว่า tight คือรัน worst-case input บน ISS หรือบอร์ด ซึ่ง benchmark ทุกตัวในตาราง §6 ยืนยันแล้ว
+
+- **loop bound เป็นเงื่อนไขของ input:** ถ้าข้อมูลทำให้ loop วิ่งเกิน `@loop_bound` เวลาที่วัดได้จะเกิน WCET เช่น `fib` ใน benchmark รับ n ได้แค่ 1–20 เทสต์ `test_a_bound_below_the_real_count_breaks_the_precondition` แสดงกรณีนี้ไว้
 - **infeasible path:** ถ้า path ที่ยาวที่สุดใน CFG เกิดจริงไม่ได้ เช่น branch สองจุดที่เงื่อนไขขัดกันเอง WCET ยังปลอดภัยแต่จะไม่ tight ทางแก้คือเขียนโค้ดให้เลี่ยงกรณีนี้ (B4) เช่นใช้ MIN/MAX แทน if ซึ่ง `sort8` และ clamp ใน `pid` ทำอยู่
 - **ยังไม่รองรับ** call ไป function ที่มี sync point, indirect call และ path ที่จบด้วย halt ภายใน callee
 
@@ -82,6 +102,13 @@ harness วัดเวลาแต่ละครั้งด้วย `t_sync 
 | ISS | dataset 0 วัดได้ **เท่ากับ** W ทุกตัว และ input สุ่ม 40 seed × 7 ชุดไม่เกิน W | `tests/test_wcet.py` |
 | RTL | trace ของ `wcet_bench` ตรงกับ ISS ทุก cycle | `tests/test_lockstep.py` (`prog_wcet_bench`) |
 | บอร์ด | ทั้ง 48 run ตรงกับ ISS, dataset 0 เท่ากับ W และไม่มีชุดไหนเกิน W (ผ่าน) | `host/tools/wcet_board.py` |
+
+ตัวอ่านผลจากบอร์ดเข้มงวดพอที่ stream ผิดรูปแบบจะไม่มีทางผ่าน:
+- หลัง magic word ตัวแรก ทุก 16 byte ต้องเป็น record หนึ่งตัว
+- id ต้องอยู่ในช่วง และ elapsed ต้องเป็นค่าที่เกิดได้
+- ตั้งแต่ (0, 0) record ต้องมาตามลำดับของ harness พอดีจนครบ 48 คู่
+
+record ที่ซ้ำ หาย สลับลำดับ อยู่นอกช่วง มี byte แปลกปน หรือ stream ที่จบก่อนครบ จะล้มทันที ทุกกรณีมีเทสต์อยู่ใน `tests/test_wcet_board.py`
 
 ผล (seed 2026) หน่วยเป็น cycle ของ function บอร์ด Arty A7-100T ได้ตัวเลข**เท่ากับ ISS ทุกช่อง** (วัด 2026-10-10)
 

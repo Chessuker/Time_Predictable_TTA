@@ -7,12 +7,28 @@ from host.asm import AssemblyFailed, assemble
 
 from .analysis import WcetError, analyse, compress
 
+GUARANTEE = """\
+What the numbers mean
+  W is a SAFE UPPER BOUND on the cycles of the segment for every input under
+  which each loop listed in 'valid if' runs its header at most N times per
+  entry into the loop. The analysis also assumes no trap is taken inside the
+  segment and that every move is legal (the static checks S1-S7 passed).
+  W is TIGHT (some input takes exactly W cycles) when the witness path is
+  feasible. The tool does not check path feasibility: correlated branches can
+  make the witness infeasible and W pessimistic, never too small. Run the
+  witness input on the ISS or the board to confirm tightness."""
+
 
 def fmt_witness(path, limit=12):
     runs = compress(path)
-    parts = [f"{a}" if a == b else f"{a}-{b}" for a, b, _ in runs[:limit]]
-    parts = [p + (f" x{r}" if r > 1 else "") for p, (_, _, r) in zip(parts, runs)]
+    parts = [(f"{a}" if a == b else f"{a}-{b}") + (f" x{r}" if r > 1 else "") for a, b, r in runs[:limit]]
     return " ".join(parts) + (" ..." if len(runs) > limit else "")
+
+
+def fmt_bounds(bounds, line_of):
+    if not bounds:
+        return "no loops (straight-line or branches only)"
+    return ", ".join(f"loop at line {line_of.get(h, '?')} <= {n}" for h, n in bounds.items())
 
 
 def main(argv=None):
@@ -44,9 +60,12 @@ def main(argv=None):
             failed |= not s.ok
             print(f"  {s.start_kind:9} {s.start:4} (line {line_of.get(s.start, '?')}) -> "
                   f"{s.end_kind:9} {s.end:4} (line {line_of.get(s.end, '?')}):  W = {s.wcet}{budget}")
-            print(f"            witness: {fmt_witness(s.witness)}")
+            print(f"            valid if: {fmt_bounds(s.loop_bounds, line_of)}")
+            print(f"            witness:  {fmt_witness(s.witness)}")
     if rep.program_wcet() is not None:
         print(f"program: {rep.program_wcet()} cycles, halt at cycle {rep.halt_cycle()}")
+    print()
+    print(GUARANTEE)
     for addr, msg in rep.warnings:
         print(f"{args.source.name}:{line_of.get(addr, '?')}: warning: {msg}", file=sys.stderr)
     return 2 if failed else 0

@@ -58,7 +58,15 @@ class Segment:
     end_kind: str                 # t_advance | t_wait | t_sync | return | halt | trap
     wcet: int                     # W: cycles from the first move to the closing one
     budget: int | None            # delta, None when it cannot be known
-    witness: list[int] = field(default_factory=list)   # addresses, in execution order
+    steps: list[tuple[int, int, int]] = field(default_factory=list)
+    # the witness path as edges (from, to, extra cycles), in execution order
+    loop_bounds: dict[int, int] = field(default_factory=dict)
+    # header address -> N for every loop the result relies on, callees included
+
+    @property
+    def witness(self):
+        """Witness path as move addresses, in execution order."""
+        return [self.start] + [v for _, v, _ in self.steps]
 
     @property
     def ok(self):
@@ -71,6 +79,7 @@ class FunctionResult:
     start: int
     segments: list[Segment]
     to_return: int | None         # WCET from entry to (and including) the return move
+    return_bounds: dict[int, int] = field(default_factory=dict)   # loop bounds to_return relies on
 
 
 @dataclass
@@ -109,7 +118,7 @@ def analyse(prog):
 
     for name in _callee_first(funcs):
         f = funcs[name]
-        to_return = {n: results[n].to_return for n in results}
+        to_return = {n: (results[n].to_return, results[n].return_bounds) for n in results}
         res = _function(f, bounds, by_start, to_return, errors, warnings)
         results[name] = res
     if errors:
@@ -160,10 +169,14 @@ def _function(f, bounds, by_start, to_return, errors, warnings):
                     seg.budget = v - offset - spec.D
             segments.append(seg)
 
-    rets = [s.wcet for s in segments if s.end_kind == "return" and s.start_kind == "entry"]
+    rets = [s for s in segments if s.end_kind == "return" and s.start_kind == "entry"]
     has_sync = any(n.dst in CUT for n in f.nodes.values())
-    return FunctionResult(f.name, f.start, segments,
-                          max(rets) if rets and not has_sync else None)
+    if not rets or has_sync:
+        return FunctionResult(f.name, f.start, segments, None)
+    rb = {}
+    for s in rets:
+        rb.update(s.loop_bounds)
+    return FunctionResult(f.name, f.start, segments, max(s.wcet for s in rets), rb)
 
 
 def _offset(kind, sync, warnings):
@@ -185,10 +198,11 @@ class _Graph:
     edges: list[tuple[int, int, int]]      # (from, to, extra cycles)
     ends: list[int]                        # addresses where a path may stop
     end_kind: dict[int, str]
+    callee_bounds: dict[int, dict[int, int]]   # edge index -> loop bounds of the callee
 
 
 def _segment_graph(f, start, by_start, to_return, errors):
-    nodes, edges, ends, end_kind = [], [], [], {}
+    nodes, edges, ends, end_kind, callee_bounds = [], [], [], {}, {}
     seen = {start}
     work = [start]
     while work:
@@ -213,12 +227,13 @@ def _segment_graph(f, start, by_start, to_return, errors):
                 if callee is None:
                     errors.append((a, f"call at {a} to {n.call}, which is not a function start"))
                     continue
-                w = to_return.get(callee.name)
+                w, cb = to_return.get(callee.name, (None, {}))
                 if w is None:
                     errors.append((a, f"call at {a} to {callee.name}, which contains a sync point "
                                       "or never returns; not supported"))
                     continue
                 extra = spec.P + w + spec.P
+                callee_bounds[len(edges)] = cb
             else:
                 extra = 0
             edges.append((a, e.to, extra))
@@ -226,7 +241,7 @@ def _segment_graph(f, start, by_start, to_return, errors):
                 seen.add(e.to)
                 work.append(e.to)
     nodes.sort(key=lambda x: (x != start, x))
-    return _Graph(nodes, edges, sorted(ends), end_kind)
+    return _Graph(nodes, edges, sorted(ends), end_kind, callee_bounds)
 
 
 # ---------------------------------------------------------------- loops
@@ -351,27 +366,121 @@ def _solve(f, g, start, start_kind, end, bounds, errors):
     if x[snk] != 1:
         return None
     w = int(round(-res.fun))
-    witness = _witness(g, x, start, end)
-    return Segment(f.name, start, start_kind, end, g.end_kind[end], w, None, witness)
+    seq = _witness(g, x, start, end, loops, bounds)
+    _check_witness(g, x, seq, start, end, obj, w, f.name, loops, bounds)
+    steps = [g.edges[i] for i in seq]
+    # W is valid only while every loop the segment can run stays within its
+    # bound, on the witness path or not: a loop on another path that runs past
+    # its bound could make that path the longest.
+    used = {h: bounds[h] for h in loops}
+    for cb in g.callee_bounds.values():
+        used.update(cb)
+    return Segment(f.name, start, start_kind, end, g.end_kind[end], w, None, steps, dict(sorted(used.items())))
 
 
-def _witness(g, x, start, end):
-    """One concrete path with exactly the solved edge counts (Hierholzer)."""
+def _witness(g, x, start, end, loops, bounds):
+    """One executable path from start to end that uses every edge exactly x(e)
+    times, returned as edge indices.
+
+    The ILP bounds a loop in aggregate (x(header) <= N * x(entering)), so an
+    arbitrary walk with the right counts (e.g. plain Hierholzer) may run one
+    entry of an inner loop more than N times and another fewer. The walk here
+    gives each entry ceil(H / E) of the H header runs and E entries still left,
+    which never exceeds N because H <= N * E: it keeps a loop going while the
+    current entry is below its quota and leaves once the quota is met.
+    _check_witness then replays the path and checks every bound per entry."""
     out = {}
-    for i, (u, v, _) in enumerate(g.edges):
-        for _ in range(x[i]):
-            out.setdefault(u, []).append(v)
-    for u in out:
-        out[u].sort(reverse=True)           # deterministic; pop() takes the lowest address
-    stack, path = [start], []
-    while stack:
-        u = stack[-1]
-        if out.get(u):
-            stack.append(out[u].pop())
-        else:
-            path.append(stack.pop())
-    path.reverse()
+    for i, (u, _, _) in enumerate(g.edges):
+        out.setdefault(u, []).append(i)
+    rem = [int(c) for c in x[:len(g.edges)]]
+    h_rem, e_rem = {}, {}
+    for h, (_, entering) in loops.items():
+        h_rem[h] = sum(rem[i] for i, (_, v, _) in enumerate(g.edges) if v == h) + (h == start)
+        e_rem[h] = sum(rem[i] for i in entering) + (h == start)
+    active = {}                                   # header -> [quota, header runs so far]
+
+    def enter(h):
+        active[h] = [-(-h_rem[h] // e_rem[h]), 1]
+        e_rem[h] -= 1
+        h_rem[h] -= 1
+
+    if start in loops:
+        enter(start)
+    path, u = [], start
+    while u != end:
+        cands = [i for i in out.get(u, []) if rem[i] > 0]
+        if not cands:
+            break
+
+        def rank(i):
+            _, v, _ = g.edges[i]
+            score = 0
+            for h, (q, done) in active.items():
+                body = loops[h][0]
+                if u not in body:
+                    continue
+                if v == h:                        # back edge of h
+                    score += 0 if done < q else 2
+                elif v not in body:               # leaves h
+                    score += 1 if done < q else 0
+            return (score, v, i)
+
+        i = min(cands, key=rank)
+        _, v, _ = g.edges[i]
+        rem[i] -= 1
+        path.append(i)
+        for h in [h for h in active if u in loops[h][0] and v not in loops[h][0]]:
+            del active[h]                         # left the loop
+        if v in loops:
+            if u in loops[v][0] and v in active:
+                active[v][1] += 1                 # next iteration
+                h_rem[v] -= 1
+            else:
+                enter(v)
+        u = v
     return path
+
+
+def _check_witness(g, x, seq, start, end, obj, w, fname, loops=None, bounds=None):
+    """The witness must be one executable path from start to end that reproduces
+    the ILP solution: right ends, connected, only graph edges, the same edge
+    counts, the same cost, and no loop header run more than N times in any one
+    entry. Flow conservation alone does not promise this, so a mismatch is an
+    internal error, never a silent result."""
+    problems = []
+    for h, (body, _) in (loops or {}).items():
+        runs, inside = ([1], True) if h == start else ([], False)   # header runs per entry
+        for i in seq:
+            u, v, _ = g.edges[i]
+            if v == h:
+                if inside and u in body:
+                    runs[-1] += 1
+                else:
+                    runs.append(1)
+                    inside = True
+            elif inside and u in body and v not in body:
+                inside = False
+        if runs and max(runs) > bounds[h]:
+            problems.append(f"loop at {h} runs {max(runs)} times in one entry, bound {bounds[h]}")
+    at = start
+    for i in seq:
+        u, v, _ = g.edges[i]
+        if u != at:
+            problems.append(f"edge {u}->{v} does not continue from {at}")
+            break
+        at = v
+    if at != end:
+        problems.append(f"path ends at {at}, not at {end}")
+    counts = np.zeros(len(g.edges), dtype=int)
+    for i in seq:
+        counts[i] += 1
+    if not np.array_equal(counts, x[:len(g.edges)]):
+        problems.append("edge counts differ from the ILP solution")
+    cost = obj[len(g.edges)] + sum(obj[i] for i in seq)
+    if int(round(cost)) != w:
+        problems.append(f"path cost {cost} differs from the ILP objective {w}")
+    if problems:
+        raise WcetError([(start, f"internal: witness of {fname} {start}->{end}: " + "; ".join(problems))])
 
 
 # ---------------------------------------------------------------- witness formatting
