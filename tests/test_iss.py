@@ -442,6 +442,84 @@ def test_stimulus_drives_io_encoder():
     assert r.sim.regs[1:4] == [5, 5, (-3) & 0xFFFFFFFF]
 
 
+def test_stimulus_drives_io_din_from_the_start_of_its_cycle():
+    # isa.md sec. 3: a read at cycle r sees the value of the latest line with cycle <= r
+    stim = Stimulus.parse("3 io.din 7\n4 io.din 9\n")
+    r = run("io.din -> r1\nio.din -> r2\nio.din -> r3\nio.din -> r4\n#0 -> trap.t_halt", stim=stim)
+    assert r.sim.regs[1:5] == [0, 7, 9, 9]                 # reads at cycles 2, 3, 4, 5
+
+
+def test_io_din_and_io_encoder_have_their_own_cycle_order():
+    stim = Stimulus.parse("10 io.encoder 1\n0 io.din 5\n20 io.encoder 2\n")
+    assert stim.value("io.din", 0) == 5 and stim.value("io.encoder", 15) == 1
+
+
+# a periodic task that samples io.din at anchor + 2 and actuates it at anchor + 101
+DIN_PERIOD, DIN_ACT = 1000, 100
+DIN_EDGE = f""".equ PERIOD, {DIN_PERIOD}
+        #0          -> tmr.t_sync
+loop:   #PERIOD     -> tmr.t_advance
+        io.encoder  -> r1
+        io.din      -> r2
+        tmr.elapsed -> r14
+        #{DIN_ACT}  -> tmr.t_wait
+        r2          -> io.pwm_cmd
+        tmr.elapsed -> r15
+        r2          -> telem.t_push
+        r14         -> telem.t_push
+        r15         -> telem.t_push
+        #loop       -> pc.t_jump
+"""
+DIN_ANCHOR = [R + (k + 1) * DIN_PERIOD for k in range(8)]       # t_sync executes at R
+DIN_CHANGES = [(DIN_ANCHOR[1] + 2, 11), (DIN_ANCHOR[2] + 3, 22),  # on the sample cycle / one after it
+               (DIN_ANCHOR[4] + 2, 33), (DIN_ANCHOR[4] + 600, 44)]
+DIN_STIM = "".join(f"{c} io.din {v}\n" for c, v in DIN_CHANGES)
+
+
+def test_io_din_sampling_edge_and_input_to_actuation_latency():
+    r = run(DIN_EDGE, stim=Stimulus.parse(DIN_STIM), max_cycles=DIN_ANCHOR[7])
+    w = [x for _, x in r.sim.telem.accepted]
+    recs = [w[i:i + 3] for i in range(0, len(w) - 2, 3)]
+    assert [x[0] for x in recs] == [0, 11, 11, 22, 33, 44, 44]      # value used by each period
+    assert {(x[1], x[2]) for x in recs} == {(3, DIN_ACT + 2)}       # el_in, el_act
+    s = 2
+    for c, v in DIN_CHANGES:
+        k = next(k for k, a in enumerate(DIN_ANCHOR) if a + s >= c)
+        write = next(cy for cy, val in r.sim.pwm_log if val == v)
+        assert write == DIN_ANCHOR[k] + DIN_ACT + 1
+        assert DIN_ACT + 1 - s <= write - c <= DIN_ACT + 1 - s + DIN_PERIOD - 1
+
+
+def din_pulse(start, hold, value=5):
+    """io.din = value for exactly `hold` cycles from `start`, 0 otherwise."""
+    return f"{start} io.din {value}\n{start + hold} io.din 0\n"
+
+
+# start of the pulse relative to the sample cycle anchor + 2 of period 3
+DIN_PHASES = [-1, 0, 1, DIN_PERIOD // 2, DIN_PERIOD - 1]
+
+
+@pytest.mark.parametrize("phase", DIN_PHASES)
+def test_io_din_held_exactly_one_period_is_used_by_exactly_one_period(phase):
+    start = DIN_ANCHOR[3] + 2 + phase
+    r = run(DIN_EDGE, stim=Stimulus.parse(din_pulse(start, DIN_PERIOD)), max_cycles=DIN_ANCHOR[7])
+    w = [x for _, x in r.sim.telem.accepted]
+    assert [w[i] for i in range(0, len(w), 3)].count(5) == 1
+
+
+def test_io_din_held_one_cycle_less_than_a_period_can_be_missed():
+    # from one cycle after a sample to the cycle before the next one
+    start = DIN_ANCHOR[3] + 2 + 1
+    r = run(DIN_EDGE, stim=Stimulus.parse(din_pulse(start, DIN_PERIOD - 1)), max_cycles=DIN_ANCHOR[7])
+    w = [x for _, x in r.sim.telem.accepted]
+    assert 5 not in [w[i] for i in range(0, len(w), 3)]
+
+
+def test_writing_io_din_is_an_illegal_port():
+    r = run("#h -> trap.handler\n.illegal 0x9280_0005\n" + HANDLER)   # #5 -> io.din
+    assert r.sim.regs[1] == spec.TrapCause.ILLEGAL_PORT
+
+
 @pytest.mark.parametrize("text, fragment", [
     ("100 io.encoder 1\n50 io.encoder 2\n", "stim line 2: io.encoder cycle 50 is not after"),
     ("100 io.encoder 1\n100 io.encoder 2\n", "stim line 2: io.encoder cycle 100 is not after"),

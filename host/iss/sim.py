@@ -111,6 +111,10 @@ class Stimulus:
             where.append(f"stim line {n}")
         return cls(entries, where)
 
+    def changes(self, port):
+        """[(cycle, value)] of one port, in cycle order."""
+        return list(zip(self._cycles.get(port, []), self._values.get(port, [])))
+
     def value(self, port, c):
         cycles = self._cycles.get(port)
         if not cycles:
@@ -251,6 +255,8 @@ class Simulator:
         if n == "io.encoder":
             if self.plant is not None:
                 return self.plant.encoder(c, self.pwm_log) & M32
+            return self.stim.value(n, c) & M32
+        if n == "io.din":
             return self.stim.value(n, c) & M32
         if n == "telem.drops":
             return self.telem.drops

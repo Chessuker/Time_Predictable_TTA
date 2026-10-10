@@ -60,6 +60,8 @@ def test_every_legal_port_pair_roundtrips():
     (0x10000020, "alu.a is not readable"),    # read a W-only port
     (0x10000110, "bits 22:8"),                # reserved src bits set
     (0x100000B0, "src 0xb0"),                 # src ID with no port
+    (0x10000093, "src 0x93"),                 # first unused ID after io.din
+    (0x92800000, "io.din is not writable"),   # io.din is an input
 ])
 def test_illegal_words(word, fragment):
     reason = illegal_reason(word)

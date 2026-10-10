@@ -146,6 +146,17 @@ cover ทั้ง 6 ข้อยืนยันว่า assumption ไม่�
 
 **ข้อจำกัด:** model ไม่ได้ตรวจค่าที่ FU คำนวณออกมา (ALU, MUL, memory) และไม่ได้ตรวจ cause ของ legality trap ส่วนนี้ยังพึ่ง lockstep กับ ISS ตามเดิม formal ครอบเรื่องเวลา, PC, trap และ halt
 
+**ตรวจซ้ำเรื่องค่าอิสระ (2026-10-10):** ระหว่างเพิ่ม `io.din` พบว่า yosys-slang ไม่สนใจ `(* anyseq *)` บนตัวแปรภายใน
+- **กลไก:** ตัวแปรที่ไม่มีตัวขับถูก elaborate เป็นค่าคงที่ `32'x` แยกตามจุดที่ใช้ แล้ว `setundef -undriven -anyseq` ในขั้น prep ของ sby เปลี่ยนแต่ละจุดเป็น `$anyseq` ของตัวเอง ถ้าสัญญาณถูกอ่านสองที่ สองที่จะได้ค่าที่ไม่เกี่ยวกัน ตอนแรก `io_din` ที่ถูกอ่านทั้งใน core และใน assertion จึงได้ counterexample ใน basecase
+- **คำอธิบายเดิมผิดเรื่องกลไก:** ข้อความข้างบนที่บอกว่า stub ใช้ `(* anyseq *)` ทำให้ทุกครั้งที่อ่านได้ word อะไรก็ได้ ผลลัพธ์ถูก แต่ที่ทำให้เป็นแบบนั้นจริงคือ setundef ของ sby ไม่ใช่ attribute
+- **ผลต่อ Phase 3 ตรวจด้วยสองวิธีบน harness ของ deb6eef (ก่อนเพิ่ม `io.din`):**
+  - ดูจาก model ที่ elaborate แล้ว (`design_prep.il`): มี `$anyseq` 32 bit สามตัว ต่อเข้าที่จุดอ่านของ imem, dmem และ `io_encoder` ใน source mux ของ core ตรงตัว และไม่มีสัญญาณใดที่ไม่มีตัวขับแล้วถูกอ่านสองที่
+  - ดูจากพฤติกรรม: เพิ่ม cover C8–C10 (ด้านล่าง) เข้าไปใน harness นั้นโดยไม่แก้อย่างอื่น cover ถึงครบ 9/9 แปลว่า word ของ code, ค่าที่ load และ `io.encoder` เปลี่ยนได้ระหว่างการอ่าน
+  - สรุป: ไม่พบช่องโหว่ใน A1–A6 ของ Phase 3 สิ่งที่ไม่ได้ทำซ้ำคือ prove และ mutation บน harness เดิม ผลของทั้งสองอย่างยังเป็นตามที่บันทึกไว้ข้างบน ส่วนรอบนี้รันบน harness ใหม่
+- **แก้ให้ไม่ต้องพึ่งเงื่อนไขนี้:** `io_encoder` และ `io_din` เป็น input ของ `tta_formal` (smtbmc ให้ค่าอิสระค่าเดียวต่อ step กับทุกจุดที่อ่าน) ส่วน `any_word` ใน stub ของ memory ยังพึ่ง setundef ในขั้น prep ของ sby แต่เขียนกำกับไว้ว่าต้องอ่านจุดเดียว (ไฟล์ stub เปลี่ยนแค่ comment) ถ้าเครื่องมือรุ่นใหม่ทำให้ stub ไม่ได้ค่าใหม่ทุกครั้งที่อ่านอีกต่อไป เช่นได้ค่าคงที่ตลอด run หรือได้ 0 C8 กับ C9 จะไม่ถึงและ `test_formal` จะล้ม
+- **cover ใหม่ยืนยันว่าค่าเปลี่ยนได้จริงทุกครั้งที่อ่าน:** C8 word ของ code สองตัวติดกันต่างกัน, C9 load สองครั้งได้ค่าไม่ใช่ 0 ที่ต่างกัน, C10 อ่าน `io.encoder` สองครั้งได้ค่าไม่ใช่ 0 ที่ต่างกัน ถ้าค่าใดกลายเป็นค่าคงที่ตลอด run หรือเป็น 0 cover เหล่านี้จะไม่ถึง
+- **ผลหลังแก้:** prove ผ่าน (k-induction, depth 12), cover ถึงครบ 10 ข้อ, mutation 4 แบบล้มทุกแบบ: deadline trap เร็วไป 1 cycle ล้มที่ A3, stall นานไป 1 cycle ล้มที่ A2, ส่ง `io_din` เข้าช่องของ `io.encoder` และกลับกัน ล้มที่ A4 ทั้งสองแบบ
+
 ---
 
 ## Plant ของ HIL: แบบหลาย cycle แทนแบบ cycle เดียว *(จดไว้ 2026-10-10)*
@@ -169,16 +180,37 @@ plant มอเตอร์ DC ของ Phase 5 อยู่ใน top ขอ�
 
 **ตัดสินใจ (2026-10-10):** บอร์ดใช้แบบหลาย cycle ส่วนแบบ cycle เดียวเก็บไว้เป็น baseline ใน repo และเทสต์ยังตรวจว่าตรงกับ Python ทุก bit
 
-**ผลบนบอร์ด (2026-10-11):** design ทั้งตัวที่มี plant ผ่าน timing ด้วย WNS +0.406 ns และ WHS +0.036 ns critical path ไม่ได้อยู่ใน plant แต่อยู่ที่ data memory → ALU ของ core
+**ผลบนบอร์ด (2026-10-10):** design ทั้งตัวที่มี plant ผ่าน timing ด้วย WNS +0.406 ns และ WHS +0.036 ns critical path ไม่ได้อยู่ใน plant แต่อยู่ที่ data memory → ALU ของ core
 
 **Setpoint และโหลด (ตัดสินใจ 2026-10-10):**
 - **ตอนนี้:** setpoint มาจากตารางใน `.data` ของโปรแกรม ส่วนแรงบิดโหลดมาจากช่วงเวลาตายตัวที่ `hil_env.sv` นับจาก reset ทั้งคู่กำหนดไว้ใน `host/hil/env.py` การรันทุกครั้งจึงได้ผลเดิมทุก cycle และเทียบกับ model ได้ตรงตัว
-- **ส่วนเสริมภายหลัง:** สวิตช์บนบอร์ด ต้องเพิ่ม port `io.sw` ใน ISA ที่ freeze แล้ว
+- **ส่วนเสริมภายหลัง:** สวิตช์บนบอร์ด ทำแล้วในชื่อ `io.din` ดูหัวข้อ Switch mode ด้านล่าง
 
 **Deadline trap บนบอร์ด:**
 - **วิธีทดสอบ:** ใช้โปรแกรมแยก `control_trap.tta` ให้ period ที่ 50 วนเกิน deadline โดยตั้งใจ
 - **ผล:** trap เกิดที่ anchor + 2000 พอดี handler เริ่มที่ anchor + 2003 สั่ง `pwm_cmd = 0` ส่ง record แล้ว halt ตรงกับ ISS ทุกค่า
 - **WCET:** tool รายงานโปรแกรมนี้ว่า OVER ซึ่งเป็นสิ่งที่ตั้งใจ ส่วน `control.tta` ได้ W = 90 จาก budget 999
+
+---
+
+## Switch mode: input ภายนอกผ่าน `io.din` *(จดไว้ 2026-10-10)*
+
+ให้สวิตช์บนบอร์ดเลือก setpoint และเปิดปิดโหลดได้ระหว่างรัน รายละเอียดของ interface และสิ่งที่รับประกันอยู่ใน [io_interface.md](io_interface.md)
+
+**ตัดสินใจร่วมกับผู้ใช้:**
+- **เป้าหมายรอบนี้เป็น demo ที่ตรวจเรื่องเวลาได้** ยังไม่อ้างว่าเทียบกับ plant model ได้ทุก bit เมื่อ input เปลี่ยน แต่ออกแบบเผื่อ production คือเผื่อ input capture, deterministic replay และ fault handling ระดับ application
+- **ชื่อ `io.din` ไม่ใช่ `io.sw`:** ISA มองเป็น input ภายนอกทั่วไป ส่วนสวิตช์บน Arty เป็นแค่ผู้ใช้รายแรก synchronizer และ debounce อยู่ใน board interface ไม่อยู่ใน core ทำให้ spec ไม่ผูกกับ vendor การเพิ่ม port เปลี่ยนเซตของ encoding ที่ legal จึงเปลี่ยน `SPEC_ID` เป็น `phase5-din-2026-10-10`
+- **โปรแกรมแยก `control_sw.tta`:** `control.tta`, `control_trap.tta` และ `wcet_bench.tta` ไม่เปลี่ยนเลย baseline ของ Phase 4–5 จึงยังใช้ได้ตรงตัว ความต่างระหว่างสองโหมดอยู่ที่ image ที่โหลด จึงไม่ใช้ `sw[3]` เลือกโหมด และสงวนไว้
+- **setpoint ต้องกด BTN0 เพื่อ commit:** debounce ทั้งกลุ่มกันค่าชั่วคราวที่เกิดจากการเด้งและ synchronizer ได้ แต่กันโค้ดตรงกลางที่นิ่งจริงตอนคนบิดสวิตช์สองตัวทีละตัวไม่ได้
+- **สวิตช์โหลดอยู่ฝั่ง environment:** ต่อเข้า `hil_env` ตรง เพราะโหลดเป็นแรงรบกวนจากภายนอก ไม่ใช่คำสั่งที่ controller รับ ค่าของสวิตช์ยังปรากฏใน `din[2]` เพื่อให้ telemetry บอกสถานะโหลดของแต่ละ period ได้ ช่องนี้ใช้ได้เฉพาะ HIL และจะถูกแทนด้วย input capture
+- **ช่วงโหลดตามเวลาของ Phase 5 ยังอยู่** (`load_on = window | load_sw`) เมื่อสวิตช์ลงหมด บอร์ดจึงทำงานเท่ากับ Phase 5 ทุก cycle
+
+**ผลบนบอร์ด (2026-10-10):**
+- timing ของ design ที่มี `board_din` ได้ WNS +0.406 ns และ WHS +0.036 ns เท่ากับก่อนเพิ่ม เพราะ path ที่ช้าที่สุดยังเป็น data memory → ALU ของ core
+- regression เมื่อสวิตช์ลงหมด: `control` 3,000 period, `control_trap` และ `wcet_bench` 48 run ได้ YES ทั้งหมด
+- `control_sw` เมื่อสวิตช์ลงหมด: 10,000 period ตรงกับ model ทุกค่า
+- `control_sw` เมื่อใช้สวิตช์: 20,000 period อ่าน encoder ที่ anchor + 1, din ที่ + 2 และ actuate ที่ + 1001 ทุก period, flags 0 และ setpoint ตรงกับ din ทุก period ลำดับ din ที่บันทึกได้คือ 0 → 1 (commit +1 รอบ) → 5 (โหลดเปิด) → 1 → 2 (commit −1 รอบ) → 3 (commit +½ รอบ) ระหว่าง commit ครั้งที่ 2 และ 3 (period 14056 ถึง 18629) din ไม่เปลี่ยนเลย
+- ช่วงที่เปิดโหลด ตำแหน่งตกไป 73 count แล้ว integral ดึงกลับ ส่วน pwm_cmd ค้างที่ราว +250 เพื่อต้านโหลด
 
 ---
 

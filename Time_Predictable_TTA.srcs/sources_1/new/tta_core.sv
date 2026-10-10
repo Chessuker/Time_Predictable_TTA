@@ -48,6 +48,7 @@ module tta_core import tta_pkg::*; #(
   input  logic        rst,
   // IO (isa.md sec. 3)
   input  logic [31:0] io_encoder,
+  input  logic [31:0] io_din,          // already synchronised by the board (isa.md sec. 3)
   output logic [31:0] io_pwm_cmd,
   // telemetry towards the UART
   output logic        telem_tx_start,
@@ -81,7 +82,7 @@ module tta_core import tta_pkg::*; #(
   // (this shortens every path that starts at the source mux).
   typedef enum int {
     S_IMM, S_REG, S_ALU, S_MUL, S_EQ, S_LT, S_LTU, S_LINK, S_MEM,
-    S_ELAPSED, S_FLAGS, S_HANDLER, S_CAUSE, S_EPC, S_ENC, S_DROPS, S_N
+    S_ELAPSED, S_FLAGS, S_HANDLER, S_CAUSE, S_EPC, S_ENC, S_DIN, S_DROPS, S_N
   } src_sel_e;
 
   logic        x_valid, x_imm, x_illegal;
@@ -141,6 +142,7 @@ module tta_core import tta_pkg::*; #(
       P_TRAP_CAUSE:   d_sel[S_CAUSE]   = 1'b1;
       P_TRAP_EPC:     d_sel[S_EPC]     = 1'b1;
       P_IO_ENCODER:   d_sel[S_ENC]     = 1'b1;
+      P_IO_DIN:       d_sel[S_DIN]     = 1'b1;
       P_TELEM_DROPS:  d_sel[S_DROPS]   = 1'b1;
       default: ;                         // illegal src: traps, value unused
     endcase
@@ -169,6 +171,7 @@ module tta_core import tta_pkg::*; #(
     if (x_sel[S_CAUSE])   value |= {29'b0, cause};
     if (x_sel[S_EPC])     value |= epc;
     if (x_sel[S_ENC])     value |= io_encoder;
+    if (x_sel[S_DIN])     value |= io_din;
     if (x_sel[S_DROPS])   value |= drops;
   end
 

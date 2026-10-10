@@ -28,7 +28,8 @@ CORE_SOURCES = [f"{DESIGN_DIR}/{f}" for f in (
     "tta_pkg.sv", "tta_sram_1r1w.sv", "fu_alu.sv", "fu_mul.sv", "fu_tmr.sv", "fu_telem.sv",
     "tta_core.sv")]
 HIL_SOURCES = [f"{DESIGN_DIR}/{f}" for f in ("plant_pkg.sv", "dc_motor_plant_mc.sv", "hil_env.sv")]
-BOARD_SOURCES = CORE_SOURCES + HIL_SOURCES + [f"{DESIGN_DIR}/uart_tx_word.sv", f"{DESIGN_DIR}/arty_tta_top.sv"]
+BOARD_SOURCES = CORE_SOURCES + HIL_SOURCES + [f"{DESIGN_DIR}/uart_tx_word.sv", f"{DESIGN_DIR}/din_debounce.sv", f"{DESIGN_DIR}/board_din.sv",
+                                              f"{DESIGN_DIR}/arty_tta_top.sv"]
 RTL_SOURCES = CORE_SOURCES + [f"{SIM_DIR}/tb_tta.sv"]
 
 
@@ -155,18 +156,22 @@ def build_hil(force=False):
         raise LockstepError("verilator warnings (treated as errors):\n" + out[-6000:])
 
 
-def run_hil(source, name="prog", max_cycles=1_000_000, checks=True):
+def run_hil(source, name="prog", max_cycles=1_000_000, checks=True, stim_text=None):
     """Like run(), but io.encoder comes from the plant: hil_env in the RTL,
-    host/hil/env.PlantCosim on the ISS, both with the test load window."""
+    host/hil/env.PlantCosim on the ISS, both with the test load window.
+    stim_text may drive io.din; its bit 2 also turns the load on (load switch)."""
     from host.hil import env
     period, on, off = HIL_TEST_LOAD
-    tau = lambda t: env.LOAD_TAU if on <= t % period < off else 0      # noqa: E731
+    window = lambda t: env.LOAD_TAU if on <= t % period < off else 0     # noqa: E731
+    stim = Stimulus.parse(stim_text) if stim_text else None
+    din = stim.changes("io.din") if stim else []
+    tau = env.tau_with_din(din, window)
     prog = assemble(source, f"{name}.tta", checks=checks)
     work = BUILD / "lockstep_hil"
     work.mkdir(parents=True, exist_ok=True)
     for suffix, text in output_files(prog).items():
         (work / f"{name}{suffix}").write_text(text, encoding="utf-8", newline="\n")
-    sim = Simulator(prog.code, prog.data, None, prog.imem_words, prog.dmem_words,
+    sim = Simulator(prog.code, prog.data, stim, prog.imem_words, prog.dmem_words,
                     plant=env.PlantCosim(tau=tau))
     iss = sim.run(max_cycles).trace
     build_hil()
@@ -174,6 +179,9 @@ def run_hil(source, name="prog", max_cycles=1_000_000, checks=True):
             f"+data={wsl_path(work / (name + '.data.hex'))}",
             f"+trace={wsl_path(work / (name + '.rtl.trace'))}",
             f"+max={max_cycles}"]
+    if stim_text:
+        (work / f"{name}.stim").write_text(stim_text, encoding="utf-8", newline="\n")
+        args.append(f"+stim={wsl_path(work / (name + '.stim'))}")
     code, out = wsl(shlex.quote(wsl_path(BINARY_HIL)) + " " + " ".join(shlex.quote(a) for a in args))
     trace_path = work / f"{name}.rtl.trace"
     if code != 0 or not trace_path.exists():

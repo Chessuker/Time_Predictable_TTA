@@ -19,6 +19,10 @@ module tta_sram_1r1w #(
   input  logic [$clog2(WORDS)-1:0] waddr,
   input  logic [31:0]              wdata
 );
+  // yosys-slang ignores this attribute: any_word is elaborated undriven and
+  // sby's setundef -undriven -anyseq makes its one use below a fresh free
+  // value every cycle (cover C8/C9 in tta_formal.sv check this). Keep it to
+  // exactly one use: a second reader would get a different free value.
   (* anyseq *) logic [31:0] any_word;
 
   always_ff @(posedge clk) begin

@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 
 from .test_asm import EXAMPLE_1
-from .test_iss import (A0, DEADLINE_EDGE, EPC_ILLEGAL, EPC_IN_JUMP, FIFO_EDGE, HANDLER, IF_ELSE, LOOP,
-                       POP_2, TIMING_EDGE, control)
+from .test_iss import (A0, DEADLINE_EDGE, DIN_ANCHOR, DIN_EDGE, DIN_PERIOD, DIN_PHASES, DIN_STIM,
+                       EPC_ILLEGAL, EPC_IN_JUMP, FIFO_EDGE, HANDLER, IF_ELSE, LOOP, POP_2, TIMING_EDGE,
+                       control, din_pulse)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -110,7 +111,14 @@ tbl:    .word -2
     "stim": ("io.encoder -> r1\nio.encoder -> r2\nio.encoder -> r3\n#0 -> trap.t_halt",
              "0 io.encoder 5\n4 io.encoder -3\n", 1_000),
     "maxcycles": ("loop: #loop -> pc.t_jump", None, 50),
+    "din": ("io.din -> r1\nio.encoder -> r2\nio.din -> r3\nio.din -> r4\n#0 -> trap.t_halt",
+            "3 io.din 7\n0 io.encoder 4\n4 io.din -1\n", 1_000),
+    "din_edge": (DIN_EDGE, DIN_STIM, DIN_ANCHOR[7]),
 }
+for _ph in DIN_PHASES:                                   # held exactly one period
+    CASES[f"din_hold_period_{_ph + 1}"] = (DIN_EDGE, din_pulse(DIN_ANCHOR[3] + 2 + _ph, DIN_PERIOD),
+                                           DIN_ANCHOR[7])
+CASES["din_hold_period_minus_1"] = (DIN_EDGE, din_pulse(DIN_ANCHOR[3] + 3, DIN_PERIOD - 1), DIN_ANCHOR[7])
 for _op, _a, _b in [("ADD", 7, -9), ("SUB", 3, 5), ("AND", 12, 10), ("OR", 12, 10), ("XOR", 12, 10),
                     ("SHL", 1, 33), ("SHR", -1, 28), ("SRA", -16, 2), ("MIN", -5, 3), ("MAX", -5, 3)]:
     CASES[f"alu_{_op.lower()}"] = (ALU.format(op=_op, a=_a, b=_b), None, 1_000)

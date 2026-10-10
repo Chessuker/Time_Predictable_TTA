@@ -29,8 +29,38 @@ LOAD_OFF = 50_000_000
 SCHEDULE = [(100, 0), (500, 4096), (400, -4096)]
 
 
+# switch mode (docs/io_interface.md): io.din from the board input interface
+N_DB = 500_000                  # board_din.sv debounce: stable for N_DB + 1 cycles (5 ms)
+DIN_SP = 0b011                  # io.din[1:0]: setpoint code, committed with BTN0
+DIN_LOAD = 0b100                # io.din[2]: load switch, live; hil_env adds it to the load window
+SP_TABLE = (0, 4096, -4096, 2048)   # control_sw.tta: setpoint by din[1:0], encoder counts
+
+
 def tau_at(t):
     return LOAD_TAU if LOAD_ON <= t % LOAD_PERIOD < LOAD_OFF else 0
+
+
+def value_at(changes, t):
+    """Value at cycle t of a signal given as [(cycle, value)] in cycle order (0 before)."""
+    v = 0
+    for c, x in changes:
+        if c > t:
+            break
+        v = x
+    return v
+
+
+def tau_with_din(din, window=tau_at):
+    """hil_env's load: on in the window or while io.din[2] (the load switch) is 1.
+    din is io.din at the core input as [(cycle, value)], e.g. from board_din.interface."""
+    import bisect
+    cycles = [c for c, _ in din]
+
+    def tau(t):
+        i = bisect.bisect_right(cycles, t) - 1
+        on = i >= 0 and din[i][1] & DIN_LOAD
+        return LOAD_TAU if on or window(t) else 0
+    return tau
 
 
 def ref_at(k):
