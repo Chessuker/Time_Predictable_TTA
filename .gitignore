@@ -42,3 +42,6 @@ dfx_runtime.txt
 
 # SymbiYosys work directories
 formal/*/
+
+# Lecture site (local only)
+lecture/
