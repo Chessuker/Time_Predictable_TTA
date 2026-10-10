@@ -148,6 +148,40 @@ cover ทั้ง 6 ข้อยืนยันว่า assumption ไม่�
 
 ---
 
+## Plant ของ HIL: แบบหลาย cycle แทนแบบ cycle เดียว *(จดไว้ 2026-10-10)*
+
+plant มอเตอร์ DC ของ Phase 5 อยู่ใน top ของบอร์ด ไม่อยู่ใน core ต่อกับ `io.encoder` และ `io.pwm_cmd` ใช้ coefficient จาก `plant_pkg.sv` ซึ่ง generate จาก `host/plant_model` แต่ละ step คำนวณ:
+- `θ' = θ + round((C01·ω + CU0·u + CT0·τ) / 2^24)`
+- `ω' = round((C11·ω + CU1·u + CT1·τ) / 2^24)`
+
+ผลคูณกว้างถึง 46 bit จึงลองสองแบบ โดยทั้งสองแบบต้องตรงกับ `FixedPlant` ทุก bit (`tests/test_plant.py`)
+
+| แบบ | ไฟล์ | latency | WNS ที่ 100 MHz | LUT | FF | DSP |
+|---|---|---|---|---|---|---|
+| cycle เดียว (baseline) | `dc_motor_plant.sv` | 1 | **−2.203 ns** (16 level) | 508 | 195 | 18 |
+| หลาย cycle | `dc_motor_plant_mc.sv` | 10 | **+3.397 ns** (12 level) | 429 | 377 | 4 |
+
+ตัวเลขมาจาก `tta_plant_compare` ใน `fpga/vivado/tta.tcl` ซึ่ง synthesize แบบ out-of-context แล้ว place & route ที่ 100 MHz
+
+- **แบบ cycle เดียวไม่ผ่าน:** worst path ทำทั้งหมดใน cycle เดียว คือคูณผ่าน DSP 3 ตัวที่ต่อเป็นสาย บวก 64 bit ปัดเศษ แล้วบวกเข้ากับ θ 48 bit ช้ากว่า 10 ns ไป 2.2 ns (ราว 82 MHz) และใช้ DSP 18 ตัว เพราะผลคูณทั้ง 6 ตัวกว้างเกิน DSP เดียว
+- **multicycle constraint ช่วยแบบ cycle เดียวตรงๆ ไม่ได้:** `u` มาจาก `pwm_cmd` ที่ core เขียนได้ทุก cycle ต้อง latch input ก่อน ซึ่งก็กลายเป็นแบบหลาย cycle ที่ต้องพึ่ง timing exception
+- **แบบหลาย cycle:** ใช้ตัวคูณ 28×40 ตัวเดียวที่มี register คั่น 3 ชั้น ป้อนผลคูณทีละ cycle Vivado ดูด register เข้าไปใน DSP (AREG, BREG, PREG) worst path เหลือแค่บวก 64 bit ข้อแลกเปลี่ยนคือ FF เกือบ 2 เท่า และ encoder เห็นผลช้าลง 9 cycle จาก step 10,000 cycle model ใน Python รับ latency เป็นพารามิเตอร์ จึงยังเทียบได้ตรงทุก cycle
+
+**ตัดสินใจ (2026-10-10):** บอร์ดใช้แบบหลาย cycle ส่วนแบบ cycle เดียวเก็บไว้เป็น baseline ใน repo และเทสต์ยังตรวจว่าตรงกับ Python ทุก bit
+
+**ผลบนบอร์ด (2026-10-11):** design ทั้งตัวที่มี plant ผ่าน timing ด้วย WNS +0.406 ns และ WHS +0.036 ns critical path ไม่ได้อยู่ใน plant แต่อยู่ที่ data memory → ALU ของ core
+
+**Setpoint และโหลด (ตัดสินใจ 2026-10-10):**
+- **ตอนนี้:** setpoint มาจากตารางใน `.data` ของโปรแกรม ส่วนแรงบิดโหลดมาจากช่วงเวลาตายตัวที่ `hil_env.sv` นับจาก reset ทั้งคู่กำหนดไว้ใน `host/hil/env.py` การรันทุกครั้งจึงได้ผลเดิมทุก cycle และเทียบกับ model ได้ตรงตัว
+- **ส่วนเสริมภายหลัง:** สวิตช์บนบอร์ด ต้องเพิ่ม port `io.sw` ใน ISA ที่ freeze แล้ว
+
+**Deadline trap บนบอร์ด:**
+- **วิธีทดสอบ:** ใช้โปรแกรมแยก `control_trap.tta` ให้ period ที่ 50 วนเกิน deadline โดยตั้งใจ
+- **ผล:** trap เกิดที่ anchor + 2000 พอดี handler เริ่มที่ anchor + 2003 สั่ง `pwm_cmd = 0` ส่ง record แล้ว halt ตรงกับ ISS ทุกค่า
+- **WCET:** tool รายงานโปรแกรมนี้ว่า OVER ซึ่งเป็นสิ่งที่ตั้งใจ ส่วน `control.tta` ได้ W = 90 จาก budget 999
+
+---
+
 ## รายการที่ต้องเขียนเพิ่มใน Phase 6
 
 - ประกาศว่า ISA เป็น constant-time โดยตั้งใจ อ้าง Liu §2.3 (มาจาก reading_notes_tier1 ข้อ 10)
