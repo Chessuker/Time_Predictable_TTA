@@ -27,7 +27,8 @@ SIM_DIR = f"{SRCS}/sim_1/new"
 CORE_SOURCES = [f"{DESIGN_DIR}/{f}" for f in (
     "tta_pkg.sv", "tta_sram_1r1w.sv", "fu_alu.sv", "fu_mul.sv", "fu_tmr.sv", "fu_telem.sv",
     "tta_core.sv")]
-BOARD_SOURCES = CORE_SOURCES + [f"{DESIGN_DIR}/uart_tx_word.sv", f"{DESIGN_DIR}/arty_tta_top.sv"]
+HIL_SOURCES = [f"{DESIGN_DIR}/{f}" for f in ("plant_pkg.sv", "dc_motor_plant_mc.sv", "hil_env.sv")]
+BOARD_SOURCES = CORE_SOURCES + HIL_SOURCES + [f"{DESIGN_DIR}/uart_tx_word.sv", f"{DESIGN_DIR}/arty_tta_top.sv"]
 RTL_SOURCES = CORE_SOURCES + [f"{SIM_DIR}/tb_tta.sv"]
 
 
@@ -125,5 +126,58 @@ def run(source, name="prog", stim_text=None, max_cycles=1_000_000, checks=True):
         raise LockstepError(f"RTL simulation failed:\n{out[-4000:]}")
     rtl = trace_path.read_text(encoding="utf-8").splitlines()
 
+    pc_line = {i.addr: i.line for i in prog.code_items}
+    return Outcome(name, iss, rtl, compare(iss, rtl, prog.source_lines, pc_line))
+
+
+# ---------------------------------------------------------------- closed loop (Phase 5)
+OBJ_HIL = BUILD / "verilator_hil"
+BINARY_HIL = OBJ_HIL / "Vtb_tta"
+HIL_TEST_LOAD = (2_000_000, 600_000, 1_100_000)     # tb_tta defaults under TTA_HIL
+
+
+def build_hil(force=False):
+    srcs = [ROOT / s for s in CORE_SOURCES + HIL_SOURCES + [f"{SIM_DIR}/tb_tta.sv"]]
+    if not force and BINARY_HIL.exists() and BINARY_HIL.stat().st_mtime >= max(s.stat().st_mtime for s in srcs):
+        return
+    OBJ_HIL.mkdir(parents=True, exist_ok=True)
+    cmd = " ".join([
+        "cd", shlex.quote(wsl_path(ROOT)), "&&",
+        "verilator --binary --timing --timescale 1ns/1ps -j 0 -Wall -Wno-fatal +define+TTA_SIM +define+TTA_HIL",
+        f"--top-module tb_tta -I{DESIGN_DIR}",
+        "--Mdir", shlex.quote(wsl_path(OBJ_HIL)), "-o Vtb_tta",
+        *CORE_SOURCES, *HIL_SOURCES, f"{SIM_DIR}/tb_tta.sv",
+    ])
+    code, out = wsl(cmd)
+    if code != 0 or not BINARY_HIL.exists():
+        raise LockstepError("verilator build failed:\n" + out[-6000:])
+    if any(l.startswith("%Warning") for l in out.splitlines()):
+        raise LockstepError("verilator warnings (treated as errors):\n" + out[-6000:])
+
+
+def run_hil(source, name="prog", max_cycles=1_000_000, checks=True):
+    """Like run(), but io.encoder comes from the plant: hil_env in the RTL,
+    host/hil/env.PlantCosim on the ISS, both with the test load window."""
+    from host.hil import env
+    period, on, off = HIL_TEST_LOAD
+    tau = lambda t: env.LOAD_TAU if on <= t % period < off else 0      # noqa: E731
+    prog = assemble(source, f"{name}.tta", checks=checks)
+    work = BUILD / "lockstep_hil"
+    work.mkdir(parents=True, exist_ok=True)
+    for suffix, text in output_files(prog).items():
+        (work / f"{name}{suffix}").write_text(text, encoding="utf-8", newline="\n")
+    sim = Simulator(prog.code, prog.data, None, prog.imem_words, prog.dmem_words,
+                    plant=env.PlantCosim(tau=tau))
+    iss = sim.run(max_cycles).trace
+    build_hil()
+    args = [f"+code={wsl_path(work / (name + '.code.hex'))}",
+            f"+data={wsl_path(work / (name + '.data.hex'))}",
+            f"+trace={wsl_path(work / (name + '.rtl.trace'))}",
+            f"+max={max_cycles}"]
+    code, out = wsl(shlex.quote(wsl_path(BINARY_HIL)) + " " + " ".join(shlex.quote(a) for a in args))
+    trace_path = work / f"{name}.rtl.trace"
+    if code != 0 or not trace_path.exists():
+        raise LockstepError(f"RTL simulation failed:\n{out[-4000:]}")
+    rtl = trace_path.read_text(encoding="utf-8").splitlines()
     pc_line = {i.addr: i.line for i in prog.code_items}
     return Outcome(name, iss, rtl, compare(iss, rtl, prog.source_lines, pc_line))
