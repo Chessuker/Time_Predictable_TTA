@@ -43,7 +43,13 @@ subject to  x(source) = 1, x(sink) = 1
 
 **Witness path:** tool เรียงจำนวนครั้งต่อ edge กลับเป็น path จริงหนึ่งเส้น เพื่อให้รู้ว่าต้องป้อน input แบบไหนจึงจะวิ่งไปตาม path ที่ยาวที่สุด เก็บเป็นลำดับของ edge ไม่ใช่ address เพราะ jump ที่มีเงื่อนไขและ target เป็นคำสั่งถัดไป จะมี edge สองเส้นที่ cost ต่างกันระหว่างคู่ address เดียวกัน
 
-constraint ของ loop ใน ILP เป็นแบบรวม การเดินแบบ Hierholzer ธรรมดาจึงอาจให้ entry หนึ่งของ loop ในวิ่งเกิน N รอบ แล้วอีก entry วิ่งน้อยกว่า ได้จำนวนครั้งและ cost ถูก แต่เป็น path ที่เกิดจริงไม่ได้ tool จึงแบ่งรอบให้แต่ละ entry อย่างสมดุล คือ `ceil(H / E)` จากจำนวน header ที่เหลือ H และ entry ที่เหลือ E ค่านี้ไม่เกิน N เพราะ ILP บังคับ `H ≤ N·E` ไว้แล้ว
+constraint ของ loop ใน ILP เป็นแบบรวม การเดินแบบ Hierholzer ธรรมดาจึงอาจให้ entry หนึ่งของ loop ในวิ่งเกิน N รอบ แล้วอีก entry วิ่งน้อยกว่า ได้จำนวนครั้งและ cost ถูก แต่เป็น path ที่เกิดจริงไม่ได้
+
+path ที่ถูกต้องมีอยู่เสมอสำหรับ loop แบบ reducible เพราะแตก flow ของ loop เป็นรอบย่อยได้ แล้วแจกให้ entry ละ `ceil(H / E)` รอบ จากจำนวน header ที่เหลือ H และ entry ที่เหลือ E ค่านี้ไม่เกิน N เพราะ ILP บังคับ `H ≤ N·E` ไว้แล้ว
+
+tool หา path นี้ด้วย depth-first search แบบ backtracking ใช้ quota ต่อ entry เป็นข้อบังคับตายตัว ทุกจุดที่ต้องเลือกจะลอง edge ที่พาไปสู่สิ่งที่ loop ต้องการก่อน คือวนต่อถ้ายังไม่ครบ quota หรือหาทางออกถ้าครบแล้ว จึงแทบไม่ต้องย้อนกลับ ถ้าหาไม่เจอภายในงบจำนวน step จะเป็น internal error
+
+ตอนแรกใช้แบบ greedy ที่ไม่ย้อนกลับ ใช้ได้กับโปรแกรมทดสอบทุกตัว แต่การเทียบกับ brute force (ด้านล่าง) เจอ loop ที่มีทางออกสองทาง ซึ่ง greedy เลือกเดินต่อในจุดที่ควรออก ตัวตรวจด้านล่างจับได้และ raise error ไม่ได้รายงานผลผิด
 
 หลังสร้างเสร็จ tool ตรวจ witness ทุกเส้นซ้ำ ถ้าข้อใดไม่ผ่านเป็น internal error ไม่มีทางกลายเป็นผลที่ผิดแบบเงียบๆ:
 - เริ่มที่ source และจบที่ sink
@@ -52,7 +58,14 @@ constraint ของ loop ใน ILP เป็นแบบรวม การเ
 - cost เท่ากับค่า objective
 - ไม่มี loop ไหนวิ่งเกิน bound ใน entry ใด entry หนึ่ง
 
-`tests/test_wcet_review.py` ยืนยันด้วยว่า witness ของโปรแกรมทดสอบทุกตัว (รวม bubble sort และ loop ซ้อน) ตรงกับลำดับ PC ที่ ISS รันจริงเมื่อใช้ worst-case input ทีละตำแหน่ง
+`tests/test_wcet_review.py` ยืนยันด้วยว่า witness ของโปรแกรมทดสอบทุกตัว (รวม bubble sort และ loop ซ้อน) ตรงกับลำดับ PC ที่ ISS รันจริงเมื่อใช้ worst-case input ทีละตำแหน่ง ส่วน `tests/test_wcet_witness_negative.py` ป้อน witness ที่ผิดทีละแบบ แล้วยืนยันว่าทุกแบบถูกปฏิเสธ รวมถึงตอนเรียกผ่าน `analyse()` ด้วย:
+- edge count ที่ไม่ตรง
+- cycle ที่ไม่ต่อกับ path
+- transition ที่ใช้ไม่ได้
+- cost ที่ไม่ตรง
+- bound ที่ถูกฝ่าฝืนใน entry หนึ่ง
+
+**เทียบกับ brute force:** `tests/test_wcet_bruteforce.py` สร้างโปรแกรมแบบมีโครงสร้างขึ้นมาแบบสุ่ม 300 ตัว ซ้อนได้ 2 ชั้น มีทั้ง if/else, loop ที่ bound 1–3, loop ที่มีทางออกที่สอง และ loop ที่มี back edge เส้นที่สอง แล้วเทียบ W จาก IPET กับการไล่ทุก path ที่นับ bound ต่อ entry ตัว brute force ใช้ loop จากตัวสร้างโปรแกรม ไม่ใช้ loop detection ของ analyzer จึงตรวจกันได้อิสระ ผลตรงกันทุกตัว รวมกับอีก 5,000 seed ที่รันแยกนอกชุดเทสต์
 
 **Loop:** หา natural loop จาก back edge (edge ที่ปลายทาง dominate ต้นทาง)
 - header ของ loop ต้องมี `@loop_bound` (S6) ถ้าไม่มีจะเป็น error

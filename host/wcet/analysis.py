@@ -367,6 +367,9 @@ def _solve(f, g, start, start_kind, end, bounds, errors):
         return None
     w = int(round(-res.fun))
     seq = _witness(g, x, start, end, loops, bounds)
+    if seq is None:
+        raise WcetError([(start, f"internal: no witness path for {f.name} {start}->{end} "
+                                 "within the search budget")])
     _check_witness(g, x, seq, start, end, obj, w, f.name, loops, bounds)
     steps = [g.edges[i] for i in seq]
     # W is valid only while every loop the segment can run stays within its
@@ -378,17 +381,25 @@ def _solve(f, g, start, start_kind, end, bounds, errors):
     return Segment(f.name, start, start_kind, end, g.end_kind[end], w, None, steps, dict(sorted(used.items())))
 
 
+WITNESS_STEPS = 2_000_000          # search budget; exceeding it is an internal error
+
+
 def _witness(g, x, start, end, loops, bounds):
     """One executable path from start to end that uses every edge exactly x(e)
-    times, returned as edge indices.
+    times and runs no loop header more than N times in one entry, returned as
+    edge indices.
 
-    The ILP bounds a loop in aggregate (x(header) <= N * x(entering)), so an
-    arbitrary walk with the right counts (e.g. plain Hierholzer) may run one
-    entry of an inner loop more than N times and another fewer. The walk here
-    gives each entry ceil(H / E) of the H header runs and E entries still left,
-    which never exceeds N because H <= N * E: it keeps a loop going while the
-    current entry is below its quota and leaves once the quota is met.
-    _check_witness then replays the path and checks every bound per entry."""
+    The ILP bounds a loop in aggregate (x(header) <= N * x(entering)), so a walk
+    that only matches the counts (e.g. plain Hierholzer) can run one entry of a
+    loop past N and another below it. Such a walk always exists for reducible
+    loops: the counts split into iterations, and the H header runs of E entries
+    can be dealt out ceil(H/E) at a time, which is <= N because H <= N * E.
+
+    The search is depth-first with backtracking. Each entry of a loop gets the
+    quota ceil(H_left / E_left) as a hard limit; among the edges that are
+    still allowed it first tries the one that moves toward what the open loops
+    need (another iteration while under quota, the way out once it is met),
+    so it rarely backtracks. Returns None if no path is found within the budget."""
     out = {}
     for i, (u, _, _) in enumerate(g.edges):
         out.setdefault(u, []).append(i)
@@ -397,48 +408,105 @@ def _witness(g, x, start, end, loops, bounds):
     for h, (_, entering) in loops.items():
         h_rem[h] = sum(rem[i] for i, (_, v, _) in enumerate(g.edges) if v == h) + (h == start)
         e_rem[h] = sum(rem[i] for i in entering) + (h == start)
-    active = {}                                   # header -> [quota, header runs so far]
-
-    def enter(h):
-        active[h] = [-(-h_rem[h] // e_rem[h]), 1]
-        e_rem[h] -= 1
-        h_rem[h] -= 1
-
+    active = {}                                   # header -> [quota, runs in this entry]
     if start in loops:
-        enter(start)
-    path, u = [], start
-    while u != end:
-        cands = [i for i in out.get(u, []) if rem[i] > 0]
-        if not cands:
-            break
+        active[start] = [-(-h_rem[start] // e_rem[start]), 1]
+        e_rem[start] -= 1
+        h_rem[start] -= 1
 
-        def rank(i):
-            _, v, _ = g.edges[i]
-            score = 0
+    def reaches(v, h, want_exit):
+        """From v, staying in h's body and off its header, can the remaining
+        edges reach an exit of h (want_exit) or a back edge to h?"""
+        body = loops[h][0]
+        seen, stack = {v}, [v]
+        while stack:
+            a = stack.pop()
+            for i in out.get(a, []):
+                if rem[i] <= 0:
+                    continue
+                b = g.edges[i][1]
+                if b == h:
+                    if not want_exit:
+                        return True
+                elif b not in body:
+                    if want_exit:
+                        return True
+                elif b not in seen:
+                    seen.add(b)
+                    stack.append(b)
+        return False
+
+    def choices(u):
+        cands = []
+        for i in out.get(u, []):
+            if rem[i] <= 0:
+                continue
+            v = g.edges[i][1]
+            bad = 0
             for h, (q, done) in active.items():
                 body = loops[h][0]
                 if u not in body:
                     continue
-                if v == h:                        # back edge of h
-                    score += 0 if done < q else 2
-                elif v not in body:               # leaves h
-                    score += 1 if done < q else 0
-            return (score, v, i)
+                if v == h:
+                    if done >= q:
+                        bad = None                # would break the quota: not allowed
+                        break
+                elif v not in body:
+                    bad += done < q               # leaving early
+                else:
+                    bad += not reaches(v, h, want_exit=done >= q)
+            if bad is not None and v in loops and v not in active and e_rem[v] <= 0:
+                bad = None                        # no entry of that loop left
+            if bad is not None:
+                cands.append((bad, v, i))
+        cands.sort()
+        return [i for _, _, i in cands]
 
-        i = min(cands, key=rank)
-        _, v, _ = g.edges[i]
+    def take(i):
+        u, v, _ = g.edges[i]
+        undo = ({h: list(a) for h, a in active.items()}, dict(h_rem), dict(e_rem))
         rem[i] -= 1
-        path.append(i)
         for h in [h for h in active if u in loops[h][0] and v not in loops[h][0]]:
-            del active[h]                         # left the loop
+            del active[h]
         if v in loops:
-            if u in loops[v][0] and v in active:
-                active[v][1] += 1                 # next iteration
+            if v in active and u in loops[v][0]:
+                active[v][1] += 1
                 h_rem[v] -= 1
             else:
-                enter(v)
-        u = v
-    return path
+                active[v] = [-(-h_rem[v] // e_rem[v]), 1]
+                e_rem[v] -= 1
+                h_rem[v] -= 1
+        return undo
+
+    def restore(i, undo):
+        nonlocal active, h_rem, e_rem
+        rem[i] += 1
+        active, h_rem, e_rem = undo
+
+    total = sum(rem)
+    path, undos = [], []
+    frames = [[start, choices(start), 0]]         # node, ordered choices, next to try
+    steps = 0
+    while frames:
+        steps += 1
+        if steps > WITNESS_STEPS:
+            return None
+        frame = frames[-1]
+        u, cands, k = frame
+        if u == end and len(path) == total:
+            return path
+        if k < len(cands):
+            frame[2] += 1
+            i = cands[k]
+            undos.append(take(i))
+            path.append(i)
+            v = g.edges[i][1]
+            frames.append([v, choices(v), 0])
+        else:
+            frames.pop()
+            if path:
+                restore(path.pop(), undos.pop())
+    return None
 
 
 def _check_witness(g, x, seq, start, end, obj, w, fname, loops=None, bounds=None):
