@@ -51,9 +51,9 @@ def trapped():
     return run, recs
 
 
-def _parse(recs, n, trap, seed=None, prefix=b""):
+def _parse(recs, n, trap, seed=None, prefix=b"", switch=False):
     data = prefix + b"".join(_bytes(r) for r in recs)
-    return B.parse_stream(_chunks(data, seed), n, trap)
+    return B.parse_stream(_chunks(data, seed), n, trap, switch=switch)
 
 
 # ---------------------------------------------------------------- trap run
@@ -156,3 +156,72 @@ def test_normal_run_rejects_a_short_stream(normal):
     _, recs = normal
     with pytest.raises(B.BoardError, match=f"ended after {N - 1} periods"):
         _parse(recs[:N - 1], N, False)
+
+
+# ---------------------------------------------------------------- switch mode (HSW1)
+from host.hil import env  # noqa: E402
+
+SW_N = 40
+
+
+def _sw_records(run):
+    words = [w for _, w in run.sim.telem.accepted]
+    n = P.SW_RECORD_WORDS
+    return [words[i:i + n] for i in range(0, len(words) - n + 1, n)]
+
+
+@pytest.fixture(scope="module")
+def sw_runs():
+    zero = M.run_iss_sw(SW_N)
+    c = zero.c_sync
+    a = lambda k: c + (k + 1) * P.PERIOD                            # noqa: E731
+    moving = M.run_iss_sw(SW_N, [(0, 0), (a(5) + 2, 1), (a(12) + 3, 2 | 4), (a(30) + 9, 3)])
+    return zero, moving
+
+
+@pytest.mark.parametrize("seed", [None, 1, 2])
+def test_switch_stream_with_din_zero_is_compared_with_the_model(sw_runs, seed):
+    zero, _ = sw_runs
+    board, trap = _parse(_sw_records(zero), SW_N, False, seed, switch=True)
+    assert [p.k for p in board] == list(range(SW_N)) and trap is None
+    diffs, exact = B.check_switch(board, trap, zero.c_sync)
+    assert diffs == [] and exact
+
+
+def test_switch_stream_with_moving_din_checks_timing_and_mapping(sw_runs):
+    _, moving = sw_runs
+    board, trap = _parse(_sw_records(moving), SW_N, False, 3, switch=True)
+    diffs, exact = B.check_switch(board, trap, moving.c_sync)
+    assert diffs == [] and not exact
+    assert B.din_changes(board) == [(0, 0), (5, 1), (13, 6), (31, 3)]
+
+
+@pytest.mark.parametrize("field, value, fragment", [
+    (3, 4096, "setpoint 4096 for din 0"),           # setpoint does not follow din
+    (6, 4, "elapsed after the inputs 4"),            # input read one cycle late
+    (7, P.ACT + 3, f"after actuate {P.ACT + 3}"),    # actuation one cycle late
+    (8, 1, "flags 1"),                               # a late period
+    (2, 8, "bits above 2"),                          # reserved din bit set
+])
+def test_switch_check_catches_each_kind_of_fault(sw_runs, field, value, fragment):
+    zero, _ = sw_runs
+    recs = [list(r) for r in _sw_records(zero)]
+    recs[7][field] = value
+    board, trap = _parse(recs, SW_N, False, switch=True)
+    diffs, _ = B.check_switch(board, trap, zero.c_sync)
+    assert any(fragment in d for d in diffs), diffs
+
+
+def test_switch_stream_with_din_zero_but_a_wrong_encoder_fails(sw_runs):
+    zero, _ = sw_runs
+    recs = [list(r) for r in _sw_records(zero)]
+    recs[20][4] += 1
+    board, trap = _parse(recs, SW_N, False, switch=True)
+    diffs, exact = B.check_switch(board, trap, zero.c_sync)
+    assert exact and len(diffs) == 1 and diffs[0].startswith("period 20:")
+
+
+def test_script_mode_does_not_accept_a_switch_stream(sw_runs):
+    zero, _ = sw_runs
+    with pytest.raises(B.BoardError, match="ended after 0 periods"):
+        _parse(_sw_records(zero), SW_N, False)

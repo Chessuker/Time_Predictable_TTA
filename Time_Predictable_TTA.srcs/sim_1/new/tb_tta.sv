@@ -97,12 +97,13 @@ module tb_tta;
 
 `ifdef TTA_HIL
   // closed loop: io.encoder comes from the plant (host/lockstep/runner.py run_hil);
-  // the load window is shortened so it falls inside a short simulation
+  // the load window is shortened so it falls inside a short simulation, and
+  // io.din[2] (from the stimulus) is the load switch as on the board
   /* verilator lint_off UNUSEDSIGNAL */
   logic load_on;
   /* verilator lint_on UNUSEDSIGNAL */
   hil_env #(.LOAD_PERIOD_C(LOAD_PERIOD_C), .LOAD_ON_C(LOAD_ON_C), .LOAD_OFF_C(LOAD_OFF_C)) u_env (
-    .clk, .rst, .pwm_cmd(io_pwm_cmd), .load_sw(1'b0), .encoder(io_encoder), .load_on
+    .clk, .rst, .pwm_cmd(io_pwm_cmd), .load_sw(io_din[2]), .encoder(io_encoder), .load_on
   );
 `else
   always_comb begin

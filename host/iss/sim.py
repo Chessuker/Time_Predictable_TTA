@@ -111,6 +111,10 @@ class Stimulus:
             where.append(f"stim line {n}")
         return cls(entries, where)
 
+    def changes(self, port):
+        """[(cycle, value)] of one port, in cycle order."""
+        return list(zip(self._cycles.get(port, []), self._values.get(port, [])))
+
     def value(self, port, c):
         cycles = self._cycles.get(port)
         if not cycles:
