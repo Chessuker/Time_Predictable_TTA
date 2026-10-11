@@ -20,6 +20,36 @@ set ::nrv_root [file normalize [file join [file dirname [info script]] .. ..]]
 
 proc nrv_dir {cache} { return [file join $::nrv_root build vivado_nrv_c$cache] }
 
+# our SystemVerilog: the shared plant/UART/FIFO of the TTA design and the baseline system
+proc nrv_sv_sources {} {
+    set root $::nrv_root
+    set srcs [file join $root Time_Predictable_TTA.srcs sources_1 new]
+    set sv {}
+    foreach f {tta_pkg.sv plant_pkg.sv dc_motor_plant_mc.sv hil_env.sv fu_telem.sv uart_tx_word.sv} {
+        lappend sv [file join $srcs $f]
+    }
+    foreach f {xbus_mem.sv xbus_hil.sv baseline_soc.sv uart_break_reset.sv arty_neorv32_top.sv} {
+        lappend sv [file join $root baseline rtl $f]
+    }
+    return $sv
+}
+
+# add the SystemVerilog files the open project does not have yet (a project
+# created before a file was added to nrv_sv_sources)
+proc nrv_add_missing {} {
+    set have [get_files -quiet -of_objects [get_filesets sources_1]]
+    set missing {}
+    foreach f [nrv_sv_sources] {
+        if {[lsearch -exact -nocase $have [file normalize $f]] < 0} { lappend missing $f }
+    }
+    if {[llength $missing]} {
+        add_files -norecurse $missing
+        set_property file_type SystemVerilog [get_files $missing]
+        update_compile_order -fileset sources_1
+        puts "nrv: added [llength $missing] source file(s): $missing"
+    }
+}
+
 proc nrv_create {cache} {
     if {$cache ne "0" && $cache ne "1"} { error "nrv_create: cache must be 0 or 1" }
     set root $::nrv_root
@@ -39,15 +69,7 @@ proc nrv_create {cache} {
     set_property library neorv32 [get_files $vhd]
     set_property file_type {VHDL 2008} [get_files $vhd]
 
-    # our SystemVerilog: the shared plant/UART/FIFO of the TTA design and the baseline system
-    set srcs [file join $root Time_Predictable_TTA.srcs sources_1 new]
-    set sv {}
-    foreach f {tta_pkg.sv plant_pkg.sv dc_motor_plant_mc.sv hil_env.sv fu_telem.sv uart_tx_word.sv} {
-        lappend sv [file join $srcs $f]
-    }
-    foreach f {xbus_mem.sv xbus_hil.sv baseline_soc.sv arty_neorv32_top.sv} {
-        lappend sv [file join $root baseline rtl $f]
-    }
+    set sv [nrv_sv_sources]
     add_files -norecurse $sv
     set_property file_type SystemVerilog [get_files $sv]
 
@@ -57,10 +79,19 @@ proc nrv_create {cache} {
     update_compile_order -fileset sources_1
 }
 
+# make nrv_c<cache> the current project: switch to it if it is already open
+# (Vivado can hold both), else open or create it
 proc nrv_open {cache} {
-    if {[current_project -quiet] eq "nrv_c$cache"} return     ;# already the open project
-    set xpr [file join [nrv_dir $cache] nrv_c$cache.xpr]
-    if {![file exists $xpr]} { nrv_create $cache } else { open_project $xpr }
+    set name nrv_c$cache
+    if {[current_project -quiet] ne $name} {
+        if {[lsearch -exact [get_projects -quiet] $name] >= 0} {
+            current_project $name
+        } else {
+            set xpr [file join [nrv_dir $cache] $name.xpr]
+            if {![file exists $xpr]} { nrv_create $cache } else { open_project $xpr }
+        }
+    }
+    nrv_add_missing
 }
 
 proc nrv_timing {} {

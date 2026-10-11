@@ -2,7 +2,8 @@
 // xbus_hil on its own: timer, register semantics and the timing monitor, with
 // every bus access strobed at a chosen cycle so the expected timestamps are
 // known exactly. The monitor's UART line is decoded and every record is
-// compared word by word with the one this bench predicts. Prints PASS/FAIL.
+// compared word by word with the one this bench predicts, including the
+// background-handler counts (BG_IN/BG_OUT) in the flags. Prints PASS/FAIL.
 //
 // Cycle t = cycles since reset = the DUT's mtime.
 module tb_xbus_hil;
@@ -142,8 +143,33 @@ module tb_xbus_hil;
     wr(11500, 4'd5, 32'd5);
     wr(11600, 4'd2, 32'd20000);
     expect_record(3, 9000, 100, 102, 2500, 32'(9102 * 3 + 7), 32'd5, 32'b0_0111);
+    // background handler marks (BG_IN = word 10, BG_OUT = word 11). Releases are
+    // spaced so the UART (1320 cycles a word, 32-word FIFO) never drops.
+    // period 4 (release 20000): two bodies of 500 and 10 cycles, and a third from
+    // 79900 that runs past the next release at 80000 (100 of its cycles are here)
+    wr(20100, 4'd10, 32'd1); wr(20600, 4'd11, 32'd1);
+    wr(21000, 4'd10, 32'd1); wr(21010, 4'd11, 32'd1);
+    wr(21100, 4'd2, 32'd80000);
+    wr(79900, 4'd10, 32'd1);
+    expect_record(4, 20000, NONE, NONE, NONE, 32'd0, 32'd0, {16'd610, 8'd3, 8'h00});
+    // period 5 (release 80000): the rest of that body, 80000..80049
+    wr(80050, 4'd11, 32'd1);
+    wr(80100, 4'd2, 32'd120000);
+    expect_record(5, 80000, NONE, NONE, NONE, 32'd0, 32'd0, {16'd50, 8'd0, 8'h00});
+    // period 6 (release 120000): a body starting in the release cycle belongs to it
+    wr(120000, 4'd10, 32'd1); wr(120020, 4'd11, 32'd1);
+    wr(120100, 4'd2, 32'd160000);
+    expect_record(6, 120000, NONE, NONE, NONE, 32'd0, 32'd0, {16'd20, 8'd1, 8'h00});
+    // period 7 (release 160000): 301 bodies, one of 78000 cycles: both counts saturate
+    for (int i = 0; i < 300; i++) begin
+      wr(160100 + 4 * i, 4'd10, 32'd1); wr(160102 + 4 * i, 4'd11, 32'd1);
+    end
+    wr(162000, 4'd10, 32'd1); wr(240000, 4'd11, 32'd1);
+    wr(240100, 4'd2, 32'd260000);
+    expect_record(7, 160000, NONE, NONE, NONE, 32'd0, 32'd0, {16'hFFFF, 8'hFF, 8'h00});
+
     // all records share one UART line (1320 cycles a word): wait for every word
-    while (got.size() < exp_w.size() && t < 3000 + (longint'(exp_w.size()) + 5) * longint'(CPW)) @(negedge clk);
+    while (got.size() < exp_w.size() && t < 260000 + 15 * longint'(CPW)) @(negedge clk);
 
     if (got.size() != exp_w.size()) fail($sformatf("%0d words, expected %0d", got.size(), exp_w.size()));
     if (got.size() != exp_w.size()) foreach (got[i]) $display("  got %0d: %08x", i, got[i]);

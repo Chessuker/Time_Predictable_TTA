@@ -28,6 +28,7 @@ entity neorv32_baseline is
     xbus_adr_o  : out std_ulogic_vector(31 downto 0);
     xbus_dat_o  : out std_ulogic_vector(31 downto 0);
     xbus_cti_o  : out std_ulogic_vector(2 downto 0);
+    xbus_tag_o  : out std_ulogic_vector(2 downto 0);  -- bit 2: instruction fetch (simulation statistics)
     xbus_we_o   : out std_ulogic;
     xbus_sel_o  : out std_ulogic_vector(3 downto 0);
     xbus_stb_o  : out std_ulogic;
@@ -74,7 +75,7 @@ begin
     xbus_adr_o  => xbus_adr_o,
     xbus_dat_o  => xbus_dat_o,
     xbus_cti_o  => xbus_cti_o,
-    xbus_tag_o  => open,
+    xbus_tag_o  => xbus_tag_o,
     xbus_we_o   => xbus_we_o,
     xbus_sel_o  => xbus_sel_o,
     xbus_stb_o  => xbus_stb_o,

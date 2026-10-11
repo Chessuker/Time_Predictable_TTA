@@ -18,6 +18,8 @@
 //   7     START         W       START: software writes it as its first store
 //   8     MON_CTRL      R/W     bit 0: monitor on (records + UART TX to the monitor)
 //   9     MON_DROPS     R       telemetry words dropped (FIFO full)
+//   10    MARK_IN       W       BG_IN: a background interrupt handler starts its body
+//   11    MARK_OUT      W       BG_OUT: ... and ends it
 //
 // Timer: MTIP = mtime >= mtimecmp, registered (irq_mti one cycle later), as the
 // RISC-V CLINT; mtimecmp resets to all ones. RELEASE is the first cycle in
@@ -30,7 +32,10 @@
 // Only the first START/SENSE/ACT after a release is kept (an event in the
 // release cycle itself belongs to the new record); a missing one reads
 // 0xFFFF_FFFF. flags: bit 0..2 start/sense/act seen, bit 3 a second event of a
-// kind arrived, bit 4 words were dropped before this record.
+// kind arrived, bit 4 words were dropped before this record, bits 15:8 the
+// number of BG_IN events, bits 31:16 the cycles spent in background bodies
+// (a cycle c counts if BG_IN at i <= c < BG_OUT at o, so one body adds o - i),
+// both over the record's cycles [release, next release) and saturating.
 // Bus responses: every access is acknowledged one cycle after its strobe.
 module xbus_hil #(
   parameter int CYCLES_PER_WORD = 1320   // UART: 40 bits x 33 clocks (as the TTA telemetry)
@@ -80,6 +85,9 @@ module xbus_hil #(
   assign sense_now = req && !we && adr == 4'd4;
   assign act_now   = req && we && adr == 4'd5;
   assign start_now = req && we && adr == 4'd7;
+  logic        bg_in_now, bg_out_now;
+  assign bg_in_now  = req && we && adr == 4'd10;
+  assign bg_out_now = req && we && adr == 4'd11;
 
   logic [31:0] drops;
   always_ff @(posedge clk) begin
@@ -121,6 +129,11 @@ module xbus_hil #(
   logic [31:0] t_start, t_sense, t_act, v_enc, v_u;
   logic [2:0]  seen;
   logic        extra, dropped;
+  logic        in_bg;                    // between a BG_IN and its BG_OUT
+  logic        bg_busy_now;              // this cycle counts as background
+  logic [7:0]  bg_n;                     // BG_IN events in the record, saturating
+  logic [15:0] bg_cyc;                   // background cycles in the record, saturating
+  assign bg_busy_now = bg_in_now || (in_bg && !bg_out_now);
 
   // snapshot of the record being sent, one word per cycle into the FIFO
   logic [31:0] out [10];
@@ -141,7 +154,10 @@ module xbus_hil #(
   always_ff @(posedge clk) begin
     if (rst || !mon_en) begin
       open_r <= 1'b0; k <= '0; out_n <= '0; seen <= '0; extra <= 1'b0;
+      in_bg <= 1'b0; bg_n <= '0; bg_cyc <= '0;
     end else begin
+      if (bg_in_now) in_bg <= 1'b1;
+      else if (bg_out_now) in_bg <= 1'b0;
       if (push) out_n <= out_n - 1'b1;
       if (release_now) begin
         if (open_r) begin
@@ -151,7 +167,7 @@ module xbus_hil #(
           out[5] <= seen[1] ? t_sense : NONE;
           out[6] <= seen[2] ? t_act   : NONE;
           out[7] <= v_enc;           out[8] <= v_u;
-          out[9] <= {27'b0, dropped, extra, seen};
+          out[9] <= {bg_cyc, bg_n, 3'b0, dropped, extra, seen};
           out_n  <= 4'd10;
           k      <= k + 1'b1;
         end
@@ -161,6 +177,11 @@ module xbus_hil #(
         extra  <= 1'b0;
         v_enc  <= '0;
         v_u    <= '0;
+        bg_n   <= {7'b0, bg_in_now};       // the release cycle is the new record's first
+        bg_cyc <= {15'b0, bg_busy_now};
+      end else if (open_r) begin
+        if (bg_in_now && bg_n != '1) bg_n <= bg_n + 1'b1;
+        if (bg_busy_now && bg_cyc != '1) bg_cyc <= bg_cyc + 1'b1;
       end
       // events after the release block, so in the release cycle they land in the new record
       if (live && start_now) begin

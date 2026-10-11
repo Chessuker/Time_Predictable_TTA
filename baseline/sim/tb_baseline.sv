@@ -44,6 +44,35 @@ module tb_baseline;
                dut.u_code.busy);
   end
 
+  // +bus=<first> prints every XBUS request accepted by a slave from that cycle on:
+  //   B <cycle> <bus cycle no.> <C|D|H|E> <we> <cti> <adr> <I|D>
+  // target slave, cti 2 = burst (the last word of a burst has 0), last field:
+  // instruction fetch or data access (xbus_tag_o(2)). A bus cycle is one
+  // stretch of cyc high; with the caches off it can hold several single accesses.
+  // +bus_h: only the xbus_hil requests (small traces over many periods)
+  longint bus_from = -1;
+  longint bus_no;
+  logic   cyc_q;
+  bit     bus_h;
+  initial begin
+    void'($value$plusargs("bus=%d", bus_from));
+    bus_h = $test$plusargs("bus_h");
+  end
+  always @(negedge clk) begin
+    if (rst) begin
+      bus_no <= 0;
+      cyc_q  <= 1'b0;
+    end else begin
+      automatic longint n = bus_no + longint'(dut.cyc && !cyc_q);
+      bus_no <= n;
+      cyc_q  <= dut.cyc;
+      if (bus_from >= 0 && cyc_n >= bus_from && dut.stb && (!bus_h || dut.hit == 2'd2))
+        $display("B %0d %0d %s %0b %0d %08x %s", cyc_n, n,
+                 dut.hit == 2'd0 ? "C" : dut.hit == 2'd1 ? "D" : dut.hit == 2'd2 ? "H" : "E",
+                 dut.we, dut.cti, dut.adr, dut.tag[2] ? "I" : "D");
+    end
+  end
+
   int errors = 0;
   initial begin : decode
     logic prev;

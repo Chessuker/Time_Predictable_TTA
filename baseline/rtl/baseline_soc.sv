@@ -37,6 +37,7 @@ module baseline_soc #(
 
   /* verilator lint_off UNUSEDSIGNAL */
   logic [2:0] cti_unused;
+  logic [2:0] tag;                      // tag[2]: instruction fetch; only the bench looks at it
   /* verilator lint_on UNUSEDSIGNAL */
   assign cti_unused = cti;              // bursts are recognised by cyc staying high
 
@@ -47,7 +48,7 @@ module baseline_soc #(
   neorv32_baseline u_cpu (
 `endif
     .clk_i(clk), .rstn_i(!rst),
-    .xbus_adr_o(adr), .xbus_dat_o(wdat), .xbus_cti_o(cti), .xbus_we_o(we),
+    .xbus_adr_o(adr), .xbus_dat_o(wdat), .xbus_cti_o(cti), .xbus_tag_o(tag), .xbus_we_o(we),
     .xbus_sel_o(sel), .xbus_stb_o(stb), .xbus_cyc_o(cyc),
     .xbus_dat_i(rdat), .xbus_ack_i(ack), .xbus_err_i(err),
     .uart0_txd_o(uart0_txd), .uart0_rxd_i(uart0_rxd), .irq_mti_i(irq_mti)

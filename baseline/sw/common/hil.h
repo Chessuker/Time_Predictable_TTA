@@ -15,6 +15,8 @@ typedef struct {
   volatile uint32_t START;        // 0x1C write = START event
   volatile uint32_t MON_CTRL;     // 0x20 bit 0: monitor on (owns the UART TX line)
   volatile uint32_t MON_DROPS;    // 0x24
+  volatile uint32_t MARK_IN;      // 0x28 write = BG_IN: a background handler body starts
+  volatile uint32_t MARK_OUT;     // 0x2C write = BG_OUT: ... and ends (counted in the monitor flags)
 } hil_regs_t;
 
 #define HIL ((hil_regs_t *)0xF0000000u)

@@ -53,6 +53,13 @@ def test_xbus_hil():
     assert code == 0 and "PASS xbus_hil" in out and "FAIL" not in out, out
 
 
+def test_uart_break_reset():
+    vtb = verilate("tb_uart_break_reset", [f"{B}/rtl/uart_break_reset.sv", f"{B}/sim/tb_uart_break_reset.sv"],
+                   BUILD / "uart_break_reset")
+    code, out = wsl(shlex.quote(wsl_path(vtb)))
+    assert code == 0 and "PASS uart_break_reset" in out and "FAIL" not in out, out
+
+
 # ---------------------------------------------------------------- whole system
 def converted(cache):
     """NEORV32 as one Verilog module (BOOT_MODE 1: starts at 0x0), rebuilt when
@@ -130,7 +137,7 @@ def test_board_top_lints_clean():
     v = converted(1)
     cmd = (f"cd {shlex.quote(wsl_path(ROOT))} && verilator --lint-only -Wall --timescale 1ns/1ps "
            f"--top-module arty_neorv32_top {B}/sim/neorv32.vlt {shlex.quote(wsl_path(v))} "
-           + " ".join(SOC_SOURCES) + f" {B}/rtl/arty_neorv32_top.sv")
+           + " ".join(SOC_SOURCES) + f" {B}/rtl/uart_break_reset.sv {B}/rtl/arty_neorv32_top.sv")
     code, out = wsl(cmd)
     warnings = [l for l in out.splitlines() if l.startswith("%Warning") and "neorv32_baseline.v" not in l]
     assert code == 0 and not warnings, out[-4000:]
@@ -138,6 +145,7 @@ def test_board_top_lints_clean():
 
 def test_sources_listed_for_vivado_exist():
     for f in ["baseline/rtl/neorv32_baseline.vhd", "baseline/rtl/arty_neorv32_top.sv",
+              "baseline/rtl/uart_break_reset.sv",
               "baseline/fpga/arty_neorv32.xdc", *SOC_SOURCES]:
         assert (ROOT / f).exists(), f
     assert Path(ROOT / "baseline/neorv32/rtl/file_list_core.f").exists()
