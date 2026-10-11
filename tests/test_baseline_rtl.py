@@ -61,15 +61,16 @@ def test_uart_break_reset():
 
 
 # ---------------------------------------------------------------- whole system
-def converted(cache):
+def converted(cache, trace=0):
     """NEORV32 as one Verilog module (BOOT_MODE 1: starts at 0x0), rebuilt when
-    the wrapper or the NEORV32 sources change."""
-    out = BUILD / "neorv32_ghdl" / f"c{cache}"
+    the wrapper or the NEORV32 sources change. trace=1: with the instruction
+    trace port (TRACE_EN, simulation measurements only)."""
+    out = BUILD / "neorv32_ghdl" / f"c{cache}{'t' if trace else ''}"
     v = out / "neorv32_baseline.v"
     srcs = [ROOT / "baseline" / "rtl" / "neorv32_baseline.vhd", *NEORV32_SRC.glob("*.vhd")]
     if not v.exists() or v.stat().st_mtime < max(s.stat().st_mtime for s in srcs):
         code, text = wsl(f"cd {shlex.quote(wsl_path(ROOT))} && bash baseline/sim/convert.sh "
-                         f"{shlex.quote(wsl_path(out))} {cache} 1", timeout=1800)
+                         f"{shlex.quote(wsl_path(out))} {cache} 1 {trace}", timeout=1800)
         assert code == 0 and v.exists(), text[-4000:]
     return v
 

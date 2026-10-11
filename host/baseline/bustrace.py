@@ -144,6 +144,36 @@ def count(trs, kinds=("Ifill", "Dfill", "Dwb", "Ird", "Drd", "Dwr")):
     return {k: sum(1 for t in trs if t.kind == k) for k in kinds}
 
 
+@dataclass
+class ITrace:
+    """Instruction-trace lines of tb_baseline +itrace (cycles of retirement)."""
+    polls: list        # (cycle, mip value) of every CSR read of mip
+    csr: list          # (cycle, pc, csr, cmd, value read) of the CSR instructions on mstatus
+    stores: list       # (cycle, adr) of the stores into [+tr_data)
+    pieces: list       # (cycle, pc) of the instructions at 32-byte boundaries of [+tr_code)
+    traps: list        # (cycle, pc) of the first instruction of every trap handler
+
+
+def parse_itrace(text):
+    t = ITrace([], [], [], [], [])
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) < 3 or f[0] != "I":
+            continue
+        c = int(f[2])
+        if f[1] == "M":
+            t.polls.append((c, int(f[3], 16)))
+        elif f[1] == "C":
+            t.csr.append((c, int(f[3], 16), int(f[4], 16), int(f[5], 16), int(f[6], 16)))
+        elif f[1] == "S":
+            t.stores.append((c, int(f[3], 16)))
+        elif f[1] == "K":
+            t.pieces.append((c, int(f[3], 16)))
+        elif f[1] == "T":
+            t.traps.append((c, int(f[3], 16)))
+    return t
+
+
 def bg_bodies(reqs):
     """[(BG_IN cycle, BG_OUT cycle)] from the xbus_hil writes of the trace"""
     ins = [r.cycle for r in reqs if r.target == "H" and r.we and r.adr & 0x3F == HIL_MARK_IN]

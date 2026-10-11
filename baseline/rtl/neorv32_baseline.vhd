@@ -20,7 +20,9 @@ use neorv32.neorv32_package.all;
 entity neorv32_baseline is
   generic (
     CACHE_EN  : natural range 0 to 1 := 1;  -- 1: I$ and D$ (the cache factor of the experiment)
-    BOOT_MODE : natural := 0              -- 0 = bootloader (board), 1 = start at 0x0 (simulation)
+    BOOT_MODE : natural := 0;             -- 0 = bootloader (board), 1 = start at 0x0 (simulation)
+    TRACE_EN  : natural range 0 to 1 := 0 -- 1: NEORV32 instruction trace port on (simulation
+                                          -- measurements only, docs/baseline_measurement.md)
   );
   port (
     clk_i       : in  std_ulogic;
@@ -49,6 +51,7 @@ begin
   generic map (
     CLOCK_FREQUENCY   => 100_000_000,
     BOOT_MODE_SELECT  => BOOT_MODE,
+    TRACE_PORT_EN     => TRACE_EN = 1,
     BOOT_ADDR_CUSTOM  => x"00000000",
     RISCV_ISA_C       => true,
     RISCV_ISA_M       => true,

@@ -71,13 +71,17 @@ def build(name, **defs):
 _VTB = {}
 
 
-def simulate(cache, hexfile, max_cycles, bus=True, plusargs=""):
-    if cache not in _VTB:
-        v = converted(cache)
-        _VTB[cache] = verilate("tb_baseline", [f"{B}/sim/neorv32.vlt", wsl_path(v), *SOC_SOURCES,
-                                               f"{B}/sim/tb_baseline.sv"], BUILD / f"baseline_sim_c{cache}")
-    log = hexfile.parent / f"sim_c{cache}.log"
-    code, out = wsl(f"{shlex.quote(wsl_path(_VTB[cache]))} +code={shlex.quote(wsl_path(hexfile))} "
+def simulate(cache, hexfile, max_cycles, bus=True, plusargs="", trace=0):
+    """Run tb_baseline; trace=1 uses the netlist with the instruction trace port."""
+    key = (cache, trace)
+    tag = f"c{cache}{'t' if trace else ''}"
+    if key not in _VTB:
+        v = converted(cache, trace)
+        _VTB[key] = verilate("tb_baseline", [f"{B}/sim/neorv32.vlt", wsl_path(v), *SOC_SOURCES,
+                                             f"{B}/sim/tb_baseline.sv"], BUILD / f"baseline_sim_{tag}",
+                             "-DITRACE" if trace else "")
+    log = hexfile.parent / f"sim_{tag}.log"
+    code, out = wsl(f"{shlex.quote(wsl_path(_VTB[key]))} +code={shlex.quote(wsl_path(hexfile))} "
                     f"+max={max_cycles} {'+bus=0' if bus else ''} {plusargs} > {shlex.quote(wsl_path(log))}; "
                     f"tail -3 {shlex.quote(wsl_path(log))}", timeout=1800)
     text = log.read_text()
