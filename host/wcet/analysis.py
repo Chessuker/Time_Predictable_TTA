@@ -28,8 +28,9 @@ the anchor, so it also cuts: the segment that ends at it has no budget, and
 the one after it starts at anchor + 1 like a segment after t_advance. A segment
 that starts at the function entry has no budget (its anchor is not known).
 
-Checks done here: S6 (every loop in a segment has @loop_bound; loops through a
-sync point are cut and need none), irreducible loops, calls into functions that
+Checks done here: S6 (every cycle has @loop_bound or passes a sync point, i.e.
+t_advance or t_wait; a cycle through t_sync alone still needs a bound, although
+t_sync cuts it into segments), irreducible loops, calls into functions that
 contain sync points (not supported), and v of a timing move being an immediate.
 """
 from dataclasses import dataclass, field
@@ -150,6 +151,7 @@ def _callee_first(funcs):
 
 
 def _function(f, bounds, by_start, callees, errors, warnings):
+    _check_t_sync_loops(f, bounds, by_start, callees, errors)
     starts = [(f.start, "entry", None)]
     for n in f.nodes.values():
         if n.dst in CUT and n.addr + 1 in f.nodes:
@@ -190,6 +192,42 @@ def _function(f, bounds, by_start, callees, errors, warnings):
     to_end = {k: w for k in ("halt", "trap") if (w := worst(k)) is not None}
     return FunctionResult(f.name, f.start, segments, ret[0] if ret else None,
                           ret[1] if ret else {}, to_end)
+
+
+def _check_t_sync_loops(f, bounds, by_start, callees, errors):
+    """S6 for cycles that pass t_sync. Only t_advance and t_wait are sync points
+    (timing_model.md sec. 3), but t_sync also cuts segments, so such a cycle never
+    shows up inside one segment and the per-segment check cannot see it. A cycle
+    is accepted if it passes a sync point or a move with @loop_bound."""
+    def succ(a):
+        n = f.nodes[a]
+        if n.dst in SYNC:
+            return []
+        out = []
+        for e in n.succ:
+            if e.to not in f.nodes or e.to in bounds:
+                continue
+            if e.kind == "after_call":
+                callee = by_start.get(n.call)
+                r = callees.get(callee.name) if callee else None
+                if r is not None and not r.has_sync and r.to_return is None:
+                    continue                    # the callee never returns
+            out.append(e.to)
+        return out
+
+    for a, n in sorted(f.nodes.items()):
+        if n.dst != "tmr.t_sync" or a in bounds:
+            continue
+        seen, stack = set(), succ(a)
+        while stack:
+            b = stack.pop()
+            if b == a:
+                errors.append((a, f"loop through t_sync at {a} in {f.name} has no @loop_bound "
+                                  "and passes no sync point (t_advance or t_wait) (S6)"))
+                break
+            if b not in seen:
+                seen.add(b)
+                stack.extend(succ(b))
 
 
 def _offset(kind, sync, warnings):

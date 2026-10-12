@@ -15,7 +15,7 @@ py -m host.wcet programs/fib.tta
 
 **W** ของ segment คือจำนวน cycle ตั้งแต่ move แรกถึงจุดจบ ถ้าจุดจบเป็นจุดตัด (sync point หรือ `t_sync`) ไม่นับ cycle ของตัวมันเองและไม่นับ stall ตาม §3 ถ้าจุดจบเป็น return, halt หรือ trap นับ move นั้นด้วย
 
-`t_sync` ไม่ใช่ sync point เพราะไม่ stall แต่ย้าย anchor ถ้าปล่อยไว้กลาง segment budget จะผิด tool จึงใช้เป็นจุดตัดด้วย ส่วนนี้ tool เพิ่มขึ้นเอง ไม่ได้อยู่ใน spec ที่ freeze แล้ว และไม่เปลี่ยนตัวเลขใดใน spec
+`t_sync` ไม่ใช่ sync point เพราะไม่ stall แต่ย้าย anchor ถ้าปล่อยไว้กลาง segment budget จะผิด tool จึงใช้เป็นจุดตัดด้วย ส่วนนี้ tool เพิ่มขึ้นเอง ไม่ได้อยู่ใน spec ที่ freeze แล้ว การตัดนี้ใช้แค่แบ่ง segment ไม่ได้ทำให้ `t_sync` นับเป็น sync point ตาม S6 loop ที่ผ่านแค่ `t_sync` จึงยังต้องมี `@loop_bound` (§3)
 
 ## 2. Cost model
 
@@ -70,7 +70,8 @@ tool หา path นี้ด้วย depth-first search แบบ backtracking
 
 **Loop:** หา natural loop จาก back edge (edge ที่ปลายทาง dominate ต้นทาง)
 - header ของ loop ต้องมี `@loop_bound` (S6) ถ้าไม่มีจะเป็น error
-- loop ที่ผ่าน sync point ถูกตัดเป็นหลาย segment อยู่แล้ว จึงไม่ต้องมี bound
+- loop ที่ผ่าน sync point (`t_advance` หรือ `t_wait`) ถูกตัดเป็นหลาย segment อยู่แล้ว จึงไม่ต้องมี bound
+- loop ที่ผ่าน `t_sync` แต่ไม่ผ่าน sync point ก็ถูกตัดเหมือนกัน จึงไม่อยู่ใน segment ใด tool ตรวจแยกต่อ function ว่าทุก cycle ที่ผ่าน `t_sync` ผ่าน sync point หรือ move ที่มี `@loop_bound` ด้วย ถ้าไม่ผ่านเป็น error S6
 - retreating edge ที่ไม่ใช่ back edge แปลว่า loop เป็นแบบ irreducible tool จะปฏิเสธ
 
 **Call:** วิเคราะห์ callee ก่อน caller ซึ่งทำได้เพราะ S5 ห้าม recursion ไว้แล้ว ถ้า callee มี path ที่จบด้วย halt หรือ trap segment ของ caller ได้จุดจบเพิ่มที่ call นั้น (บรรทัด `halt in f, called` ใน output) witness ของจุดจบนี้หยุดที่ call ส่วน path ใน callee ดูได้จาก segment entry ถึง halt ของ callee ถ้า callee ไม่มี return เลย tool ไม่สร้าง edge ไปยัง move ถัดจาก call
