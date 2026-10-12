@@ -4,6 +4,11 @@ Before the fix, any status other than 0 was read as "this end is unreachable"
 and the segment was silently left out of the report. scipy.optimize.milp
 statuses: 0 optimal, 1 iteration or time limit, 2 infeasible, 3 unbounded,
 4 other (numerical trouble and the like).
+
+Status 0 is only reported success: HiGHS stops once the gap is within its
+tolerance (mip_rel_gap, nonzero by default), so the returned W may be below
+the maximum. The analysis asks for mip_rel_gap = 0 and accepts W only when the
+dual bound proves that no integer solution exceeds it (review of PR Round A).
 """
 from types import SimpleNamespace
 
@@ -36,7 +41,7 @@ def fake(**kw):
 ])
 def test_non_optimal_status_is_an_error_not_unreachable(monkeypatch, status, message):
     monkeypatch.setattr(A, "milp", fake(status=status, message=message))
-    with pytest.raises(WcetError, match=rf"no proven optimum .*status {status}: {message}"):
+    with pytest.raises(WcetError, match=rf"did not report success .*status {status}: {message}"):
         analyse(assemble(SRC, "t.tta"))
 
 
@@ -51,7 +56,7 @@ def test_status_1_with_a_feasible_but_unproven_point_is_an_error(monkeypatch):
 
 
 @pytest.mark.parametrize("x, fun, what", [
-    (lambda n: None, -5.0, "no proven optimum"),
+    (lambda n: None, -5.0, "did not report success"),
     (lambda n: np.zeros(n), 0.0, "not one path"),             # optimal but leaves no flow to the sink
     (lambda n: np.full(n, 0.5), -3.0, "not one path"),        # fractional counts
 ])
@@ -68,6 +73,53 @@ def test_objective_that_disagrees_with_the_counts_is_an_error(monkeypatch):
     monkeypatch.setattr(A, "milp", milp)
     with pytest.raises(WcetError, match="objective"):
         analyse(assemble(SRC, "t.tta"))
+
+
+def solved(**override):
+    """The real solution with some fields replaced: what a solver that stopped
+    early, or reported its bound badly, would hand back."""
+    def milp(c, **kw):
+        res = REAL_MILP(c, **kw)
+        fields = {k: res[k] for k in res}
+        fields.update({k: (v(res) if callable(v) else v) for k, v in override.items()})
+        return SimpleNamespace(**fields)
+    return milp
+
+
+@pytest.mark.parametrize("dual", [
+    lambda r: r.fun - 1,          # status 0, but the bound allows a W one higher
+    lambda r: r.fun - 40,         # a wide gap, as with a nonzero mip_rel_gap
+    lambda r: -np.inf,            # no bound at all
+    lambda r: np.nan,
+    None,                         # the field is missing
+])
+def test_success_without_a_proof_of_optimality_is_an_error(monkeypatch, dual):
+    if dual is None:
+        def milp(c, **kw):
+            res = REAL_MILP(c, **kw)
+            return SimpleNamespace(**{k: res[k] for k in res if k != "mip_dual_bound"})
+    else:
+        milp = solved(mip_dual_bound=dual, mip_gap=0.01)
+    monkeypatch.setattr(A, "milp", milp)
+    with pytest.raises(WcetError, match="reported success .* but did not prove W = .* optimal"):
+        analyse(assemble(SRC, "t.tta"))
+
+
+def test_a_gap_below_one_cycle_is_still_a_proof(monkeypatch):
+    # every W is an integer, so a bound below W + 1 leaves no better solution
+    monkeypatch.setattr(A, "milp", solved(mip_dual_bound=lambda r: r.fun - 0.5))
+    assert analyse(assemble(SRC, "t.tta")).program_wcet() == 12
+
+
+def test_the_solver_is_asked_to_close_the_gap(monkeypatch):
+    seen = []
+
+    def milp(c, **kw):
+        seen.append(kw.get("options"))
+        return REAL_MILP(c, **kw)
+    monkeypatch.setattr(A, "milp", milp)
+    analyse(assemble(SRC, "t.tta"))
+    assert seen and all(o == {"mip_rel_gap": 0.0} for o in seen)
 
 
 def test_the_real_solver_still_gives_the_bound():

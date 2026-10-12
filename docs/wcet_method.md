@@ -42,7 +42,15 @@ subject to  x(source) = 1, x(sink) = 1
 
 แก้ด้วย `scipy.optimize.milp` (HiGHS) ทำ ILP แยกทุกคู่ของจุดเริ่มกับจุดจบ ผลที่ได้เป็นจำนวนครั้งต่อ edge
 
-จุดจบทุกจุดใน segment ไปถึงได้ด้วย simple path ซึ่งผ่าน constraint ทุกแถวเมื่อ N ≥ 1 ILP จึงมีคำตอบเสมอ (พิสูจน์ทีละแถวไว้ใน comment ของ `_solve` tool เช็ค N ≥ 1 เองด้วยไม่พึ่ง assembler และ `tests/test_wcet_ilp_feasible.py` แทน path นี้ลงใน constraint จริงของ ILP ทั้ง 480 ตัวที่โปรแกรมทดสอบสร้างขึ้น) ถ้า solver คืนสถานะอื่นที่ไม่ใช่ optimum ที่พิสูจน์แล้ว (ชนเวลา, infeasible, unbounded, ปัญหาเชิงตัวเลข) หรือคำตอบไม่ใช่ path เดียวที่เป็นจำนวนเต็ม tool จะ raise internal error ไม่ตีความว่าจุดจบนั้นไปไม่ถึง (`tests/test_wcet_solver_status.py`)
+จุดจบทุกจุดใน segment ไปถึงได้ด้วย simple path ซึ่งผ่าน constraint ทุกแถวเมื่อ N ≥ 1 ILP จึงมีคำตอบเสมอ (พิสูจน์ทีละแถวไว้ใน comment ของ `_solve` tool เช็ค N ≥ 1 เองด้วยไม่พึ่ง assembler และ `tests/test_wcet_ilp_feasible.py` แทน path นี้ลงใน constraint จริงของ ILP ทั้ง 480 ตัวที่โปรแกรมทดสอบสร้างขึ้น)
+
+solver รายงานว่าสำเร็จ (status 0) ยังไม่พอ เพราะ HiGHS หยุดเมื่อ gap อยู่ใน tolerance ซึ่งค่า default ของ `mip_rel_gap` ไม่ใช่ 0 คำตอบที่ได้จึงอาจต่ำกว่าค่าสูงสุดจริง ทำให้ W ไม่ปลอดภัย tool จึงตั้ง `mip_rel_gap = 0` และรับ W เมื่อผ่านครบ 4 ข้อเท่านั้น:
+- solver รายงานว่าสำเร็จ ถ้าชนเวลา, infeasible, unbounded หรือมีปัญหาเชิงตัวเลข เป็น error ไม่ตีความว่าจุดจบนั้นไปไม่ถึง
+- คำตอบเป็น path เดียวและเป็นจำนวนเต็ม
+- objective เป็นจำนวนเต็มที่ตรงกับ W ที่คิดจาก edge count
+- dual bound ของ solver พิสูจน์ว่าไม่มีคำตอบใดเกิน W: W ทุกค่าเป็นจำนวนเต็ม ขอบบน −`mip_dual_bound` จึงต้องน้อยกว่า W + 1 ถ้าไม่มี dual bound หรือ bound ยังเปิดช่องให้ W ที่สูงกว่า เป็น error
+
+ข้อใดไม่ผ่านเป็น internal error และ CLI ไม่พิมพ์ W (`tests/test_wcet_solver_status.py`)
 
 **Witness path:** tool เรียงจำนวนครั้งต่อ edge กลับเป็น path จริงหนึ่งเส้น เพื่อให้รู้ว่าต้องป้อน input แบบไหนจึงจะวิ่งไปตาม path ที่ยาวที่สุด เก็บเป็นลำดับของ edge ไม่ใช่ address เพราะ jump ที่มีเงื่อนไขและ target เป็นคำสั่งถัดไป จะมี edge สองเส้นที่ cost ต่างกันระหว่างคู่ address เดียวกัน
 

@@ -425,7 +425,10 @@ def _solve(f, g, start, start_kind, end, bounds, errors,
     cons = [LinearConstraint(np.array(a_eq), b_eq, b_eq)]
     if a_ub:
         cons.append(LinearConstraint(np.array(a_ub), -np.inf, 0))
-    res = milp(-obj, constraints=cons, integrality=np.ones(nv), bounds=(0, np.inf))
+    # mip_rel_gap = 0: HiGHS must close the gap instead of stopping within its
+    # default relative gap; a W below the true maximum would be unsound.
+    res = milp(-obj, constraints=cons, integrality=np.ones(nv), bounds=(0, np.inf),
+               options={"mip_rel_gap": 0.0})
     # The ILP always has an optimum, so anything else is a solver failure, never
     # "unreachable", and is reported instead of dropping the segment.
     # Feasible: g holds only moves reachable from start, so a simple path p from
@@ -441,9 +444,15 @@ def _solve(f, g, start, start_kind, end, bounds, errors,
     # the one unit of flow, every edge count has a finite bound.
     # tests/test_wcet_ilp_feasible.py checks the witness x against the real
     # constraint rows of every ILP the test programs produce.
+    #
+    # Reported success is not enough. Status 0 means the solver stopped within
+    # its gap tolerance; the bound is sound only if no feasible solution beats
+    # the one returned. The checks below, in order: the solver reports success,
+    # the solution is one path, its objective is the integer W of its counts,
+    # and the solver's dual bound proves that no solution exceeds W.
     where = f"{f.name} {start}->{end}"
     if res.status != 0 or res.x is None or res.fun is None:
-        raise WcetError([(start, f"internal: ILP solver gave no proven optimum for {where} "
+        raise WcetError([(start, f"internal: ILP solver did not report success for {where} "
                                  f"(status {res.status}: {res.message})")])
     x = np.rint(res.x).astype(int)
     if np.abs(res.x - x).max() > 1e-6 or x.min() < 0 or x[src] != 1 or x[snk] != 1:
@@ -453,6 +462,14 @@ def _solve(f, g, start, start_kind, end, bounds, errors,
     if abs(w + res.fun) > 1e-6 or w != int(obj @ x):
         raise WcetError([(start, f"internal: ILP objective for {where} is not an integer "
                                  "matching its solution")])
+    # milp minimises -W, so -mip_dual_bound is an upper bound on every feasible
+    # W. Every W is an integer (integer costs, integer counts), so W is proven
+    # maximal when that bound is below W + 1; the 1e-6 only absorbs rounding.
+    dual = getattr(res, "mip_dual_bound", None)
+    if dual is None or not np.isfinite(dual) or -dual >= w + 1 - 1e-6:
+        raise WcetError([(start, f"internal: ILP solver reported success for {where} but did "
+                                 f"not prove W = {w} optimal (dual bound {dual}, "
+                                 f"gap {getattr(res, 'mip_gap', None)})")])
     seq = _witness(g, x, start, end, loops, bounds)
     if seq is None:
         raise WcetError([(start, f"internal: no witness path for {f.name} {start}->{end} "
