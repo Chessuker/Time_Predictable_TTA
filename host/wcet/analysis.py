@@ -119,6 +119,9 @@ def analyse(prog):
     funcs = cfg.build(prog.code, prog.functions,
                       illegal=[i.addr for i in prog.code_items if i.kind == "illegal"])
     bounds = {a["addr"]: a["n"] for a in prog.annotations if a["kind"] == "loop_bound"}
+    low = [(a, f"@loop_bound {n} at {a}: N must be >= 1") for a, n in bounds.items() if n < 1]
+    if low:                               # the ILP is feasible only for N >= 1 (see _solve)
+        raise WcetError(low)
     by_start = {f.start: f for f in funcs.values()}
     errors, warnings = [], []
     results = {}
@@ -423,12 +426,33 @@ def _solve(f, g, start, start_kind, end, bounds, errors,
     if a_ub:
         cons.append(LinearConstraint(np.array(a_ub), -np.inf, 0))
     res = milp(-obj, constraints=cons, integrality=np.ones(nv), bounds=(0, np.inf))
-    if res.status != 0 or res.x is None:
-        return None                         # the end is not reachable under the bounds
+    # The ILP always has an optimum, so anything else is a solver failure, never
+    # "unreachable", and is reported instead of dropping the segment.
+    # Feasible: g holds only moves reachable from start, so a simple path p from
+    # start to end exists. Take x(e) = 1 on p, x(src) = x(snk) = 1. Flow holds on
+    # a simple path. For a loop header h, the left side x(edges into h) + [h =
+    # start] is at most 1 because p visits h once. If p enters h by u -> h with
+    # h != start, u is outside h's body (h dominates its body, so reaching u
+    # would pass h first), so u -> h is an entering edge and the right side is
+    # at least N >= 1 (analyse() checks every N >= 1); if h = start it is N.
+    # Bounded: irreducible loops are refused, so every cycle has a back edge to
+    # a header whose runs are at most N times its entering edges; from the
+    # outermost loop in, whose entering edges lie on no cycle and carry at most
+    # the one unit of flow, every edge count has a finite bound.
+    # tests/test_wcet_ilp_feasible.py checks the witness x against the real
+    # constraint rows of every ILP the test programs produce.
+    where = f"{f.name} {start}->{end}"
+    if res.status != 0 or res.x is None or res.fun is None:
+        raise WcetError([(start, f"internal: ILP solver gave no proven optimum for {where} "
+                                 f"(status {res.status}: {res.message})")])
     x = np.rint(res.x).astype(int)
-    if x[snk] != 1:
-        return None
+    if np.abs(res.x - x).max() > 1e-6 or x.min() < 0 or x[src] != 1 or x[snk] != 1:
+        raise WcetError([(start, f"internal: ILP solution for {where} is not one path "
+                                 "from start to end")])
     w = int(round(-res.fun))
+    if abs(w + res.fun) > 1e-6 or w != int(obj @ x):
+        raise WcetError([(start, f"internal: ILP objective for {where} is not an integer "
+                                 "matching its solution")])
     seq = _witness(g, x, start, end, loops, bounds)
     if seq is None:
         raise WcetError([(start, f"internal: no witness path for {f.name} {start}->{end} "

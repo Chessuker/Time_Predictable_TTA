@@ -42,6 +42,8 @@ subject to  x(source) = 1, x(sink) = 1
 
 แก้ด้วย `scipy.optimize.milp` (HiGHS) ทำ ILP แยกทุกคู่ของจุดเริ่มกับจุดจบ ผลที่ได้เป็นจำนวนครั้งต่อ edge
 
+จุดจบทุกจุดใน segment ไปถึงได้ด้วย simple path ซึ่งผ่าน constraint ทุกแถวเมื่อ N ≥ 1 ILP จึงมีคำตอบเสมอ (พิสูจน์ทีละแถวไว้ใน comment ของ `_solve` tool เช็ค N ≥ 1 เองด้วยไม่พึ่ง assembler และ `tests/test_wcet_ilp_feasible.py` แทน path นี้ลงใน constraint จริงของ ILP ทั้ง 480 ตัวที่โปรแกรมทดสอบสร้างขึ้น) ถ้า solver คืนสถานะอื่นที่ไม่ใช่ optimum ที่พิสูจน์แล้ว (ชนเวลา, infeasible, unbounded, ปัญหาเชิงตัวเลข) หรือคำตอบไม่ใช่ path เดียวที่เป็นจำนวนเต็ม tool จะ raise internal error ไม่ตีความว่าจุดจบนั้นไปไม่ถึง (`tests/test_wcet_solver_status.py`)
+
 **Witness path:** tool เรียงจำนวนครั้งต่อ edge กลับเป็น path จริงหนึ่งเส้น เพื่อให้รู้ว่าต้องป้อน input แบบไหนจึงจะวิ่งไปตาม path ที่ยาวที่สุด เก็บเป็นลำดับของ edge ไม่ใช่ address เพราะ jump ที่มีเงื่อนไขและ target เป็นคำสั่งถัดไป จะมี edge สองเส้นที่ cost ต่างกันระหว่างคู่ address เดียวกัน
 
 constraint ของ loop ใน ILP เป็นแบบรวม การเดินแบบ Hierholzer ธรรมดาจึงอาจให้ entry หนึ่งของ loop ในวิ่งเกิน N รอบ แล้วอีก entry วิ่งน้อยกว่า ได้จำนวนครั้งและ cost ถูก แต่เป็น path ที่เกิดจริงไม่ได้
