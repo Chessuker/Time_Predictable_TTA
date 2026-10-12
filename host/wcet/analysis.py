@@ -3,9 +3,9 @@
 Every function's move-level CFG (host/common/cfg.py, structure only) is cut at
 the sync points t_advance and t_wait. A SEGMENT runs from a start (the function
 entry, or the move after a sync point) to an end (a sync point, a return, a
-halt or a word that always traps). Its WCET W is the longest path, found as an
-integer linear program over how often each edge is taken (IPET, Li & Malik
-1995):
+halt or a word that always traps, also one reached inside a callee). Its WCET W
+is the longest path, found as an integer linear program over how often each
+edge is taken (IPET, Li & Malik 1995):
 
   maximize    sum of x(move) * 1  +  sum of x(edge) * extra(edge)
   subject to  x(source) = 1, x(sink) = 1
@@ -17,6 +17,8 @@ not used here):
   every move that executes costs 1 cycle                            R1
   a taken jump or call, and a return, adds P bubbles                R4
   a call adds the callee's WCET from its entry to its return move   (callees first; S5)
+  a call to a callee that may halt or trap also ends the caller's segment at
+    the call: the call move, P, and the callee's WCET from its entry to that end
   the sync point that closes a segment, and its stall, are not counted   sec. 3
 
 Budget: a segment that ends at a sync point with an immediate v has
@@ -54,7 +56,7 @@ class Segment:
     function: str
     start: int                    # address of the first move
     start_kind: str               # entry | t_advance | t_wait | t_sync
-    end: int                      # address of the closing move
+    end: int                      # address of the closing move (the call, if `via`)
     end_kind: str                 # t_advance | t_wait | t_sync | return | halt | trap
     wcet: int                     # W: cycles from the first move to the closing one
     budget: int | None            # delta, None when it cannot be known
@@ -62,6 +64,7 @@ class Segment:
     # the witness path as edges (from, to, extra cycles), in execution order
     loop_bounds: dict[int, int] = field(default_factory=dict)
     # header address -> N for every loop the result relies on, callees included
+    via: str | None = None        # the halt or trap is inside this callee, called at `end`
 
     @property
     def witness(self):
@@ -80,6 +83,9 @@ class FunctionResult:
     segments: list[Segment]
     to_return: int | None         # WCET from entry to (and including) the return move
     return_bounds: dict[int, int] = field(default_factory=dict)   # loop bounds to_return relies on
+    to_end: dict[str, tuple[int, dict[int, int]]] = field(default_factory=dict)
+    # "halt" / "trap" -> (WCET from entry to and including that move, loop bounds)
+    has_sync: bool = False        # contains t_advance, t_wait or t_sync
 
 
 @dataclass
@@ -118,8 +124,7 @@ def analyse(prog):
 
     for name in _callee_first(funcs):
         f = funcs[name]
-        to_return = {n: (results[n].to_return, results[n].return_bounds) for n in results}
-        res = _function(f, bounds, by_start, to_return, errors, warnings)
+        res = _function(f, bounds, by_start, results, errors, warnings)
         results[name] = res
     if errors:
         raise WcetError(errors)
@@ -144,7 +149,7 @@ def _callee_first(funcs):
     return order
 
 
-def _function(f, bounds, by_start, to_return, errors, warnings):
+def _function(f, bounds, by_start, callees, errors, warnings):
     starts = [(f.start, "entry", None)]
     for n in f.nodes.values():
         if n.dst in CUT and n.addr + 1 in f.nodes:
@@ -152,12 +157,12 @@ def _function(f, bounds, by_start, to_return, errors, warnings):
 
     segments = []
     for start, kind, sync in starts:
-        g = _segment_graph(f, start, by_start, to_return, errors)
-        if g is None:
-            continue
+        g = _segment_graph(f, start, by_start, callees, errors)
         offset = _offset(kind, sync, warnings)
-        for end in g.ends:
-            seg = _solve(f, g, start, kind, end, bounds, errors)
+        ends = [(end, g.end_kind[end], 0, {}, None) for end in g.ends] + g.call_ends
+        for end, end_kind, sink_extra, end_bounds, via in ends:
+            seg = _solve(f, g, start, kind, end, bounds, errors,
+                         end_kind=end_kind, sink_extra=sink_extra, end_bounds=end_bounds, via=via)
             if seg is None:
                 continue
             if seg.end_kind in ("t_advance", "t_wait"):
@@ -169,14 +174,22 @@ def _function(f, bounds, by_start, to_return, errors, warnings):
                     seg.budget = v - offset - spec.D
             segments.append(seg)
 
-    rets = [s for s in segments if s.end_kind == "return" and s.start_kind == "entry"]
-    has_sync = any(n.dst in CUT for n in f.nodes.values())
-    if not rets or has_sync:
-        return FunctionResult(f.name, f.start, segments, None)
-    rb = {}
-    for s in rets:
-        rb.update(s.loop_bounds)
-    return FunctionResult(f.name, f.start, segments, max(s.wcet for s in rets), rb)
+    if any(n.dst in CUT for n in f.nodes.values()):
+        return FunctionResult(f.name, f.start, segments, None, has_sync=True)
+
+    def worst(kind):
+        segs = [s for s in segments if s.end_kind == kind and s.start_kind == "entry"]
+        if not segs:
+            return None
+        b = {}
+        for s in segs:
+            b.update(s.loop_bounds)
+        return max(s.wcet for s in segs), b
+
+    ret = worst("return")
+    to_end = {k: w for k in ("halt", "trap") if (w := worst(k)) is not None}
+    return FunctionResult(f.name, f.start, segments, ret[0] if ret else None,
+                          ret[1] if ret else {}, to_end)
 
 
 def _offset(kind, sync, warnings):
@@ -199,10 +212,12 @@ class _Graph:
     ends: list[int]                        # addresses where a path may stop
     end_kind: dict[int, str]
     callee_bounds: dict[int, dict[int, int]]   # edge index -> loop bounds of the callee
+    call_ends: list = field(default_factory=list)
+    # (call address, "halt" | "trap", cycles after the call move, callee loop bounds, callee)
 
 
-def _segment_graph(f, start, by_start, to_return, errors):
-    nodes, edges, ends, end_kind, callee_bounds = [], [], [], {}, {}
+def _segment_graph(f, start, by_start, callees, errors):
+    nodes, edges, ends, end_kind, callee_bounds, call_ends = [], [], [], {}, {}, []
     seen = {start}
     work = [start]
     while work:
@@ -227,13 +242,18 @@ def _segment_graph(f, start, by_start, to_return, errors):
                 if callee is None:
                     errors.append((a, f"call at {a} to {n.call}, which is not a function start"))
                     continue
-                w, cb = to_return.get(callee.name, (None, {}))
-                if w is None:
-                    errors.append((a, f"call at {a} to {callee.name}, which contains a sync point "
-                                      "or never returns; not supported"))
+                r = callees[callee.name]
+                if r.has_sync:
+                    errors.append((a, f"call at {a} to {callee.name}, which contains a sync point; "
+                                      "not supported"))
                     continue
-                extra = spec.P + w + spec.P
-                callee_bounds[len(edges)] = cb
+                # a callee that may stop the program ends this segment at the call
+                for kind, (w_end, cb_end) in r.to_end.items():
+                    call_ends.append((a, kind, spec.P + w_end, cb_end, callee.name))
+                if r.to_return is None:
+                    continue                     # never returns: no edge to the move after the call
+                extra = spec.P + r.to_return + spec.P
+                callee_bounds[len(edges)] = r.return_bounds
             else:
                 extra = 0
             edges.append((a, e.to, extra))
@@ -241,7 +261,7 @@ def _segment_graph(f, start, by_start, to_return, errors):
                 seen.add(e.to)
                 work.append(e.to)
     nodes.sort(key=lambda x: (x != start, x))
-    return _Graph(nodes, edges, sorted(ends), end_kind, callee_bounds)
+    return _Graph(nodes, edges, sorted(ends), end_kind, callee_bounds, call_ends)
 
 
 # ---------------------------------------------------------------- loops
@@ -299,7 +319,11 @@ def _loops(g, start):
 
 
 # ---------------------------------------------------------------- ILP
-def _solve(f, g, start, start_kind, end, bounds, errors):
+def _solve(f, g, start, start_kind, end, bounds, errors,
+           end_kind=None, sink_extra=0, end_bounds=None, via=None):
+    """W of one (start, end) pair. An end inside a callee (via) leaves the graph
+    at its call move, and the sink carries sink_extra = P + the callee's W to it."""
+    end_kind = end_kind or g.end_kind[end]
     try:
         loops = _loops(g, start)
     except WcetError as e:
@@ -353,8 +377,9 @@ def _solve(f, g, start, start_kind, end, bounds, errors):
     # the sync point that closes the segment is not counted
     obj = np.zeros(nv)
     for i, (u, v, extra) in enumerate(g.edges):
-        obj[i] += extra + (0 if (v == end and g.end_kind[end] in SYNC_KINDS) else 1)
-    obj[src] += 0 if (start == end and g.end_kind[end] in SYNC_KINDS) else 1
+        obj[i] += extra + (0 if (v == end and end_kind in SYNC_KINDS) else 1)
+    obj[src] += 0 if (start == end and end_kind in SYNC_KINDS) else 1
+    obj[snk] += sink_extra
 
     cons = [LinearConstraint(np.array(a_eq), b_eq, b_eq)]
     if a_ub:
@@ -378,7 +403,9 @@ def _solve(f, g, start, start_kind, end, bounds, errors):
     used = {h: bounds[h] for h in loops}
     for cb in g.callee_bounds.values():
         used.update(cb)
-    return Segment(f.name, start, start_kind, end, g.end_kind[end], w, None, steps, dict(sorted(used.items())))
+    used.update(end_bounds or {})
+    return Segment(f.name, start, start_kind, end, end_kind, w, None, steps,
+                   dict(sorted(used.items())), via)
 
 
 WITNESS_STEPS = 2_000_000          # search budget; exceeding it is an internal error
@@ -544,7 +571,7 @@ def _check_witness(g, x, seq, start, end, obj, w, fname, loops=None, bounds=None
         counts[i] += 1
     if not np.array_equal(counts, x[:len(g.edges)]):
         problems.append("edge counts differ from the ILP solution")
-    cost = obj[len(g.edges)] + sum(obj[i] for i in seq)
+    cost = obj[len(g.edges)] + sum(obj[i] for i in seq) + obj[len(g.edges) + 1]
     if int(round(cost)) != w:
         problems.append(f"path cost {cost} differs from the ILP objective {w}")
     if problems:

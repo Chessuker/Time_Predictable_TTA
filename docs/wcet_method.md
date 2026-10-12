@@ -11,7 +11,7 @@ py -m host.wcet programs/fib.tta
 **Segment** คือช่วงของโปรแกรมระหว่างจุดตัดสองจุดใน function เดียว
 
 - **จุดเริ่ม:** entry ของ function, move ถัดจาก sync point (`t_advance`, `t_wait`) หรือ move ถัดจาก `t_sync`
-- **จุดจบ:** sync point, `t_sync`, return (`pc.link -> pc.t_jump`), `trap.t_halt` หรือ word ที่ trap เสมอ (`.illegal`)
+- **จุดจบ:** sync point, `t_sync`, return (`pc.link -> pc.t_jump`), `trap.t_halt` หรือ word ที่ trap เสมอ (`.illegal`) รวมถึง halt หรือ trap ที่อยู่ใน callee ซึ่งนับเป็นจุดจบที่ move ของ call
 
 **W** ของ segment คือจำนวน cycle ตั้งแต่ move แรกถึงจุดจบ ถ้าจุดจบเป็นจุดตัด (sync point หรือ `t_sync`) ไม่นับ cycle ของตัวมันเองและไม่นับ stall ตาม §3 ถ้าจุดจบเป็น return, halt หรือ trap นับ move นั้นด้วย
 
@@ -24,6 +24,7 @@ py -m host.wcet programs/fib.tta
 | move ที่ execute | 1 | R1 |
 | jump หรือ call ที่ taken, return | + P | R4 |
 | call ไป `f` | + P + W(f) + P | W(f) = entry ถึง return รวม move ของ return |
+| call ไป `f` ที่อาจ halt หรือ trap | segment ของ caller จบที่ call: 1 + P + W_end(f) | W_end(f) = entry ถึง halt หรือ trap รวม move นั้น |
 | stall ของ sync point | ไม่นับ | §3 |
 
 edge cost ใน `host/common/cfg.py` เป็นค่าขั้นต่ำที่สร้างไว้สำหรับ S1 tool นี้ใช้แค่โครงสร้างของ CFG และคิด cost เองตามตารางข้างบน
@@ -72,7 +73,7 @@ tool หา path นี้ด้วย depth-first search แบบ backtracking
 - loop ที่ผ่าน sync point ถูกตัดเป็นหลาย segment อยู่แล้ว จึงไม่ต้องมี bound
 - retreating edge ที่ไม่ใช่ back edge แปลว่า loop เป็นแบบ irreducible tool จะปฏิเสธ
 
-**Call:** วิเคราะห์ callee ก่อน caller ซึ่งทำได้เพราะ S5 ห้าม recursion ไว้แล้ว
+**Call:** วิเคราะห์ callee ก่อน caller ซึ่งทำได้เพราะ S5 ห้าม recursion ไว้แล้ว ถ้า callee มี path ที่จบด้วย halt หรือ trap segment ของ caller ได้จุดจบเพิ่มที่ call นั้น (บรรทัด `halt in f, called` ใน output) witness ของจุดจบนี้หยุดที่ call ส่วน path ใน callee ดูได้จาก segment entry ถึง halt ของ callee ถ้า callee ไม่มี return เลย tool ไม่สร้าง edge ไปยัง move ถัดจาก call
 
 ## 4. Budget
 
@@ -100,7 +101,7 @@ segment ที่จบที่ sync point ซึ่ง v เป็น immediat
 
 - **loop bound เป็นเงื่อนไขของ input:** ถ้าข้อมูลทำให้ loop วิ่งเกิน `@loop_bound` เวลาที่วัดได้จะเกิน WCET เช่น `fib` ใน benchmark รับ n ได้แค่ 1–20 เทสต์ `test_a_bound_below_the_real_count_breaks_the_precondition` แสดงกรณีนี้ไว้
 - **infeasible path:** ถ้า path ที่ยาวที่สุดใน CFG เกิดจริงไม่ได้ เช่น branch สองจุดที่เงื่อนไขขัดกันเอง WCET ยังปลอดภัยแต่จะไม่ tight ทางแก้คือเขียนโค้ดให้เลี่ยงกรณีนี้ (B4) เช่นใช้ MIN/MAX แทน if ซึ่ง `sort8` และ clamp ใน `pid` ทำอยู่
-- **ยังไม่รองรับ** call ไป function ที่มี sync point, indirect call และ path ที่จบด้วย halt ภายใน callee
+- **ยังไม่รองรับ** call ไป function ที่มี sync point (tool raise error) และ indirect call (assembler ไม่ยอมรับ)
 
 ## 6. การยืนยัน
 
