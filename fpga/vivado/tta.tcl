@@ -11,6 +11,8 @@
 #   tta_use name      switch the image to an already assembled program
 #   tta_timing        after implementation: print WNS/WHS of the routed design
 #   tta_paths ?n?     tta_timing plus one line per worst setup path
+#   tta_report        timing, utilisation (design, core, memories, plant) and the power
+#                     estimate into build/vivado_tta, as nrv_report does for the baseline
 #   tta_plant_compare place and route both plant implementations on their own at
 #                     100 MHz and print WNS, logic levels, LUT, FF and DSP
 #
@@ -137,6 +139,35 @@ proc tta_plant_compare {} {
             [dict get $r lut] [dict get $r ff] [dict get $r dsp]]
     }
     foreach {top r} $rows { puts "  $top worst path: [dict get $r path]" }
+}
+
+# Phase 6: the same numbers as nrv_report (fpga/vivado/nrv.tcl) for the TTA
+# design, into build/vivado_tta: timing, utilisation of the whole design, the
+# core (with its instruction and data memory) and the parts outside it, and
+# the vectorless power estimate. Run after Generate Bitstream.
+proc tta_report {} {
+    tta_timing
+    set out [file join [tta_root] build vivado_tta]
+    file mkdir $out
+    puts "tta_report: image [get_property generic [get_filesets sources_1]]"
+    report_timing_summary -file [file join $out timing.rpt]
+    report_utilization -hierarchical -hierarchical_depth 3 -file [file join $out utilization_hier.rpt]
+    report_utilization -file [file join $out utilization.rpt]
+    report_power -file [file join $out power.rpt]
+    foreach {name cell} {total "" core u_core imem u_core/u_imem dmem u_core/u_dmem
+                         plant u_env uart u_uart din u_din} {
+        if {$cell eq ""} { set in "" } else { set in " && NAME =~ $cell/*" }
+        puts [format "tta_report: %-6s LUT %6d  FF %6d  BRAM36 %5.1f  DSP %3d" $name \
+            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == LUT$in"]] \
+            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == FLOP_LATCH$in"]] \
+            [expr {[llength [get_cells -hier -quiet -filter "REF_NAME == RAMB36E1$in"]] \
+                   + 0.5 * [llength [get_cells -hier -quiet -filter "REF_NAME == RAMB18E1$in"]]}] \
+            [llength [get_cells -hier -quiet -filter "REF_NAME =~ DSP48*$in"]]]
+    }
+    set w "?"
+    regexp {Total On-Chip Power \(W\)\s*\|\s*([0-9.]+)} [report_power -return_string] -> w
+    puts "tta_report: total on-chip power $w W (vectorless estimate)"
+    puts "tta_report: reports in $out"
 }
 
 # One line per worst setup path: slack, logic levels, start -> end.

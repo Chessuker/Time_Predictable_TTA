@@ -214,8 +214,64 @@ plant มอเตอร์ DC ของ Phase 5 อยู่ใน top ขอ�
 
 ---
 
-## รายการที่ต้องเขียนเพิ่มใน Phase 6
+## ISA แบบ constant-time โดยตั้งใจ *(จดไว้ 2026-10-12)*
 
-- ประกาศว่า ISA เป็น constant-time โดยตั้งใจ อ้าง Liu §2.3 (มาจาก reading_notes_tier1 ข้อ 10)
-- Timing Unit แบบ anchor เทียบกับ timestamp ในแบบของ PTARM และ FlexPRET
-- spec ที่ไม่ผูกกับ vendor (MUL 32×32 ให้ 32 bit ล่าง, L = 2)
+Liu (2012, §2.3) แบ่งการใส่เวลาเข้า ISA เป็นสองแนว แนวแรกคือ constant-time ISA ที่ทุกคำสั่งมีเวลาคงที่และเวลานั้นเป็นส่วนหนึ่งของ ISA แนวที่สองคือเพิ่ม timing instruction ไว้คุมเวลา ส่วนคำสั่งอื่นจะเร็วเท่าไรก็ได้ Liu เลือกแนวที่สองใน PTARM และ FlexPRET ก็ไปทางเดียวกัน
+
+**ISA นี้เลือกแนวแรก:** ทุก move ใช้ 1 cycle, latency ของ FU คงที่ (L = 1 ยกเว้น MUL = 2), memory เป็น on-chip synchronous SRAM ที่ latency ไม่ขึ้นกับ address หรือประวัติการเข้าถึง และไม่มี cache, branch prediction หรือ interlock (timing_model §2, §7)
+
+**เหตุผล:** เป้าของงานนี้คือ WCET ที่ได้จากการนับ ไม่ใช่การประมาณ เมื่อทุกอย่างคงที่ WCET ของโปรแกรมคือจำนวน cycle บน path ที่ยาวที่สุด และ tool ตรวจได้ว่า static เท่ากับ measured ทุก cycle (Phase 4) ส่วน timing instruction ของแนวที่สองบอกได้แค่ว่าจะรอถึงเมื่อไรและจะ trap เมื่อไร Liu เองเขียนไว้ว่าไม่มีคำสั่งไหน enforce execution time ได้ ตัวเครื่องข้างใต้ต้อง predictable เองถึงจะได้ WCET แน่น
+
+**ราคาที่จ่าย:**
+- microarchitecture รุ่นถัดไปทำให้เร็วขึ้นไม่ได้โดยไม่เปลี่ยน ISA ถ้าลด latency ของ FU ใด โปรแกรมเดิมที่นับ cycle ไว้จะผิด
+- ไม่มี cache จึงต้องพอใจกับ memory บนชิปขนาดเล็ก และไม่ได้ประโยชน์จาก locality
+
+**หลักฐานจาก Phase 6:** NEORV32 ที่ใช้ cache และ interrupt คือตัวอย่างของเครื่องที่เวลาไม่ได้อยู่ใน ISA busy-wait ไปที่ release + 1001 จบจริงที่ 1,019 ถึง 1,033 เมื่อเปิด cache และหลัง 1,032 เมื่อปิด ส่วน TTA actuate ที่ + 1001 ทุก period ([baseline_comparison.md](baseline_comparison.md))
+
+---
+
+## Timing Unit แบบ anchor เทียบกับ timestamp ของ PTARM และ FlexPRET *(จดไว้ 2026-10-12)*
+
+PTARM (Liu 2012) และ FlexPRET (Zimmer et al. 2014) ให้นาฬิกาเป็น timestamp 64 bit หน่วย ns โปรแกรม `get_time` ลง general register สองตัว บวก period เอง แล้วส่งค่ากลับให้ `delay_until` และ `exception_on_expire`
+
+**ของเรา:** TMR เป็นเจ้าของเลขคณิตของเวลาทั้งหมด state 64 bit (`now`, `anchor`, `deadline`) อยู่ในยูนิต comparator ก็อยู่ในยูนิต ค่าที่วิ่งบน bus เป็น 32 bit ทุกตัว และเป็นระยะจาก anchor (`t_advance`, `t_wait`, `t_arm`, `elapsed`)
+
+**ผลที่ได้:**
+- **period ไม่ drift โดยโครงสร้าง:** `t_advance` บวก period เข้า anchor ในฮาร์ดแวร์ timed loop แบบที่อ่าน `now` มาเป็นฐานใหม่ทุกรอบ (Liu Fig. 2.15 แบบที่ 1 ซึ่ง drift สะสม) เขียนไม่ได้เลย
+- **ไม่ต้องชดเชย loop overhead:** Liu §3.6.3 ต้องลบ offset 80 ns ทุกรอบ เพราะการบวก timestamp ใน software กินเวลา ของเราการบวก period ใช้ 0 cycle ของโปรแกรม
+- **jitter 0 cycle:** PTARM เห็นเวลาเปลี่ยนทุก thread cycle (40 ns) `delay_until` จึงมี jitter ได้ถึง 39 ns ของเราเป็น single thread 1 move ต่อ cycle move หลัง `t_wait` จึงเริ่มที่ target + D พอดี (D = 1)
+- **late กับ deadline นิยามในฮาร์ดแวร์:** ตอน `t_advance` ถ้า `now > anchor` อยู่แล้วแปลว่ารอบก่อนเกิน period และ `now >= deadline` เป็นจริงครั้งแรกตอน `now == deadline` พอดีเพราะ counter เพิ่มทีละ 1 formal ของ Phase 3 จึงเขียน property เป็นของ TMR อย่างเดียวได้
+- **bus แคบลง:** ไม่ต้องย้ายค่า 64 bit ผ่าน register สองตัว
+
+**ข้อแลกเปลี่ยน:**
+- โปรแกรมเห็นเวลาแบบ absolute ได้ทางเดียวคือ `tmr.now_lo` / `tmr.now_hi` (2 move, latch ตอนอ่าน lo แบบ GTL/GTH ของ FlexPRET) มีไว้สำหรับ debug และ time sync
+- มี anchor เดียว จึงรองรับ task เดียวที่มี period เดียว หลาย task ต้องใช้ schedule table (stretch goal ในแผน §9)
+- หน่วยเป็น cycle ไม่ใช่ ns การย้ายไป clock อื่นต้องคำนวณ offset ใหม่
+
+---
+
+## Spec ที่ไม่ผูกกับ vendor *(จดไว้ 2026-10-12)*
+
+isa.md และ timing_model.md นิยามความกว้าง latency และ memory ด้วยสิ่งที่ software ต้องการและฮาร์ดแวร์ทั่วไป ไม่ใช้ primitive ของ FPGA เป็นเหตุผล เพราะตั้งใจเผยแพร่บน GitHub และอาจทำเป็น ASIC
+
+- **MUL:** signed 32 × 32 ให้ 32 bit ล่าง แบบเดียวกับ `mul` ของ RISC-V ความกว้างมาจาก operand ของ control law ไม่ได้มาจากขนาด DSP48E1 (25 × 18) ซึ่งเคยถูกเสนอแล้วตกไป port ID ของ `mul.out_hi` กันไว้
+- **L = 2 ของ MUL:** ถ้า L = 1 ทุก implementation ต้องคูณ 32 × 32 ให้เสร็จใน cycle เดียวต่อจาก src mux ซึ่งเสี่ยงบน FPGA ที่ 100 MHz และยากขึ้นบน ASIC ที่ clock สูงกว่า L = 2 ยอมให้มี pipeline register กลางตัวคูณ เสียไม่เกิน 1 cycle ต่อการคูณและยังเป็นค่าคงที่ (timing_model §7)
+- **memory:** spec เขียนว่า on-chip synchronous SRAM latency คงที่ บน Arty เป็น BRAM บน ASIC เป็น SRAM macro
+- **board I/O:** synchronizer และ debounce ของ `io.din` อยู่ใน board interface ไม่อยู่ใน core
+- ข้อเท็จจริงของ FPGA ที่สำคัญ เช่น timing closure ที่ 100 MHz หรือการที่ Vivado ดูด register เข้า DSP เขียนเป็นหมายเหตุของ implementation เท่านั้น
+
+---
+
+## Baseline ของ Phase 6: NEORV32 *(จดไว้ 2026-10-12)*
+
+ตัดสินทีละข้อร่วมกับผู้ใช้ระหว่าง 2026-10-10 ถึง 2026-10-12 วิธีวัดอยู่ใน [baseline_measurement.md](baseline_measurement.md) ผลเทียบอยู่ใน [baseline_comparison.md](baseline_comparison.md)
+
+- **core:** NEORV32 v1.13.6 เป็น git submodule ที่ `baseline/neorv32` เป็น soft-core RISC-V ที่ไม่ผูกกับ vendor และตั้งค่า cache ได้ (rv32imc + Zicntr, 100 MHz) toolchain คือ xPack GCC 15.2.0 ใน WSL
+- **memory อยู่หลัง cache:** code และ data อยู่บน XBUS ด้วย wait state (FIRST_LAT 10, BURST_LAT 1) ถ้าใช้ IMEM/DMEM ภายในซึ่งเร็วเท่า cache การเปิดปิด cache จะไม่มีผล I$ และ D$ ขนาด 64 line × 64 B แบบ direct-mapped มีสอง bitstream คือเปิดและปิด cache
+- **release:** MTIME/MTIMECMP อยู่ใน `xbus_hil` ขับ `irq_mti_i` ทุก 100,000 cycle (`mtimecmp += period` จึงไม่ drift) CLINT ของ NEORV32 ปิดไว้
+- **actuation สองแบบ:** asap สั่งทันทีที่คำนวณเสร็จ และ wait รอถึง release + 1001 แบบเดียวกับ TTA deadline คือ release + 2000
+- **โหลดเบื้องหลัง:** L0 ไม่มี, L1d thrash D$ (16 KB, line ละ 1 word) เป็นตัวหลัก, L1di เพิ่ม code 8 KB (เปิด cache เท่านั้น) เป็นการทดลองเสริมที่วัดผลของ I$ pressure ภายใต้ workload นี้ ไม่ใช่ต้นทุนของ I$ miss ล้วน, L2 คือ L1d บวก GPTMR ที่ 7300.3 Hz (THR 6848) ซึ่งไม่ลงตัวกับ period handler วน 60 รอบคงที่
+- **วัดด้วยฮาร์ดแวร์ภายนอก core:** `xbus_hil` timestamp START, SENSE, ACT ทุก period ส่ง record NRV1 ทาง UART ที่ 3 Mbaud host replay plant model จาก pwm_cmd ที่บันทึกได้ต้องได้ encoder ทุกค่า ผ่าน integrity ไม่ได้แปลว่าไม่พลาด deadline
+- **โหลดโปรแกรมผ่าน bootloader:** ใช้ UART break 10 ms reset ทั้งระบบรวม plant host จึงเริ่ม run ใหม่ได้เองโดยไม่ต้องกดปุ่ม
+- **polling:** sweep ขนาด chunk ด้วยเกณฑ์ที่ประกาศก่อนวัด ไม่มีค่า N ที่ผ่านทุก configuration และไม่ได้ผ่อนเกณฑ์ จึงไม่ได้รัน polling บนบอร์ด ([baseline_measurement.md](baseline_measurement.md) §3.6)
+- **เทียบ resource:** ใช้ทั้ง design ลบ plant เป็นตัวเลขหลัก เพราะขอบเขตใกล้กันที่สุด ตัวเลขของ processor อย่างเดียวรายงานไว้ใต้ตารางพร้อมบอกขอบเขต BRAM ไม่นับเป็นผล เพราะขนาด memory เลือกตามโปรแกรม power เป็นค่าประมาณแบบ vectorless เท่านั้น

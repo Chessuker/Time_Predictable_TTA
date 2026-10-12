@@ -7,8 +7,9 @@
 # Then:
 #   nrv_build cache   create build/vivado_nrv_c<cache>/nrv_c<cache>.xpr (cache 0 or 1),
 #                     synthesise, implement and write the bitstream; prints WNS/WHS
-#   nrv_report cache  timing, utilisation of the baseline system and of NEORV32
-#                     alone, and the power estimate, into build/vivado_nrv_c<cache>/
+#   nrv_report cache  timing, utilisation of the whole design, the baseline system,
+#                     NEORV32 alone and the parts of the system (memories, monitor,
+#                     plant), and the power estimate, into build/vivado_nrv_c<cache>/
 #   nrv_bit cache     path of the bitstream, for Program Device
 #
 # Program with the Hardware Manager as usual, then use the host scripts in
@@ -128,14 +129,17 @@ proc nrv_report {cache} {
     report_utilization -hierarchical -hierarchical_depth 3 -file [file join $out utilization_hier.rpt]
     report_utilization -file [file join $out utilization.rpt]
     report_power -file [file join $out power.rpt]
-    foreach {name cell} {system u_soc cpu u_soc/u_cpu} {
-        set c [get_cells $cell]
+    # whole design, the baseline system, NEORV32 alone, then the parts of the
+    # system: code and data memory, monitor/timer, plant (for the TTA comparison)
+    foreach {name cell} {total "" system u_soc cpu u_soc/u_cpu code u_soc/u_code data u_soc/u_data
+                         hil u_soc/u_hil plant u_soc/u_env} {
+        if {$cell eq ""} { set in "" } else { set in " && NAME =~ $cell/*" }
         puts [format "nrv_report: %-6s LUT %6d  FF %6d  BRAM36 %5.1f  DSP %3d" $name \
-            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == LUT && NAME =~ $cell/*"]] \
-            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == FLOP_LATCH && NAME =~ $cell/*"]] \
-            [expr {[llength [get_cells -hier -quiet -filter "REF_NAME == RAMB36E1 && NAME =~ $cell/*"]] \
-                   + 0.5 * [llength [get_cells -hier -quiet -filter "REF_NAME == RAMB18E1 && NAME =~ $cell/*"]]}] \
-            [llength [get_cells -hier -quiet -filter "REF_NAME =~ DSP48* && NAME =~ $cell/*"]]]
+            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == LUT$in"]] \
+            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == FLOP_LATCH$in"]] \
+            [expr {[llength [get_cells -hier -quiet -filter "REF_NAME == RAMB36E1$in"]] \
+                   + 0.5 * [llength [get_cells -hier -quiet -filter "REF_NAME == RAMB18E1$in"]]}] \
+            [llength [get_cells -hier -quiet -filter "REF_NAME =~ DSP48*$in"]]]
     }
     set w "?"
     regexp {Total On-Chip Power \(W\)\s*\|\s*([0-9.]+)} [report_power -return_string] -> w
