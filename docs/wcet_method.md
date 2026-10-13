@@ -106,13 +106,14 @@ segment ที่จบที่ sync point ซึ่ง v เป็น immediat
 **W เป็นขอบบนที่ปลอดภัย (safe upper bound) เสมอ** ภายใต้เงื่อนไขที่ tool พิมพ์ไว้ในบรรทัด `valid if` ของแต่ละ segment ได้แก่
 - loop ทุกตัวที่ segment อาจวิ่งผ่าน รวม loop ใน callee ต้องวิ่ง header ไม่เกิน N ครั้งต่อการเข้า loop หนึ่งครั้ง
 - loop ที่ไม่อยู่บน worst path ก็นับเป็นเงื่อนไขด้วย เพราะถ้ามันวิ่งเกิน bound path ที่ผ่านมันอาจยาวกว่า W
-- ไม่มี trap เกิดใน segment และทุก move ถูกกติกา (ผ่าน S1–S7)
+- ไม่มี trap เกิดใน segment และทุก move ถูกกติกา (ผ่าน S1–S7) ข้อนี้รวม deadline trap ด้วย ซึ่ง tool **ไม่ได้ตรวจ** ดูด้านล่าง
 
 **W เป็นค่า tight** คือมี input ที่ใช้เวลา W พอดี ก็ต่อเมื่อ witness path เกิดได้จริง tool ไม่ได้ตรวจ feasibility ของ path ถ้ามี branch ที่เงื่อนไขขัดกันเอง W จะสูงกว่าความจริงได้แต่ไม่มีทางต่ำกว่า วิธียืนยันว่า tight คือรัน worst-case input บน ISS หรือบอร์ด ซึ่ง benchmark ทุกตัวในตาราง §6 ยืนยันแล้ว
 
 - **loop bound เป็นเงื่อนไขของ input:** ถ้าข้อมูลทำให้ loop วิ่งเกิน `@loop_bound` เวลาที่วัดได้จะเกิน WCET เช่น `fib` ใน benchmark รับ n ได้แค่ 1–20 เทสต์ `test_a_bound_below_the_real_count_breaks_the_precondition` แสดงกรณีนี้ไว้
 - **infeasible path:** ถ้า path ที่ยาวที่สุดใน CFG เกิดจริงไม่ได้ เช่น branch สองจุดที่เงื่อนไขขัดกันเอง WCET ยังปลอดภัยแต่จะไม่ tight ทางแก้คือเขียนโค้ดให้เลี่ยงกรณีนี้ (B4) เช่นใช้ MIN/MAX แทน if ซึ่ง `sort8` และ clamp ใน `pid` ทำอยู่
 - **ยังไม่รองรับ** call ไป function ที่มี sync point (tool raise error) และ indirect call (assembler ไม่ยอมรับ)
+- **deadline ไม่ได้ตรวจ** (audit A3-4): W ที่อยู่ใน budget ไม่ได้แปลว่าทัน deadline ของ `t_arm` เพราะ deadline นับจาก anchor ข้าม sync point และ timing_model §3 ยังไม่ได้กำหนดว่า tool ต้องพิสูจน์อะไรจาก task-level WCET (§7 ของ timing_model) tool จึงติดป้าย `deadline_unchecked` ให้ทุก segment ที่อาจรันขณะ armed หรือ call function ที่ `t_arm` ซึ่งหาด้วย dataflow แบบเดียวกับ S3 CLI พิมพ์ `deadline: ... NOT checked` ใต้ segment เหล่านั้นและเตือนทาง stderr แต่ไม่ reject และ exit code ไม่เปลี่ยน ถ้าตั้ง deadline ของ `control.tta` เป็น anchor + 50 ทุก budget ยังผ่าน แต่ ISS trap จริง (`tests/test_wcet_deadline.py`)
 
 ## 6. การยืนยัน
 

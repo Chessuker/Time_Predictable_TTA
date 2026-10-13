@@ -66,6 +66,10 @@ class Segment:
     loop_bounds: dict[int, int] = field(default_factory=dict)
     # header address -> N for every loop the result relies on, callees included
     via: str | None = None        # the halt or trap is inside this callee, called at `end`
+    deadline_unchecked: bool = False
+    # the segment may execute a move while a t_arm deadline is armed (here or in a
+    # callee). The analysis does not check deadlines: W within its budget does not
+    # show that the deadline is met (audit A3-4)
 
     @property
     def witness(self):
@@ -87,6 +91,7 @@ class FunctionResult:
     to_end: dict[str, tuple[int, dict[int, int]]] = field(default_factory=dict)
     # "halt" / "trap" -> (WCET from entry to and including that move, loop bounds)
     has_sync: bool = False        # contains t_advance, t_wait or t_sync
+    may_arm: bool = False         # contains t_arm, or calls a function that does
 
 
 @dataclass
@@ -104,6 +109,10 @@ class Report:
             return None
         ends = [s.wcet for s in main.segments if s.end_kind == "halt"]
         return max(ends) if ends else None
+
+    def unchecked_deadlines(self):
+        """Segments that may run while a deadline is armed; their deadline is not checked."""
+        return [s for f in self.functions.values() for s in f.segments if s.deadline_unchecked]
 
     def halt_cycle(self):
         w = self.program_wcet()
@@ -160,9 +169,13 @@ def _function(f, bounds, by_start, callees, errors, warnings):
         if n.dst in CUT and n.addr + 1 in f.nodes:
             starts.append((n.addr + 1, n.dst.split(".")[1], n))
 
+    armed = _armed_moves(f) | {
+        n.addr for n in f.nodes.values()
+        if n.call in by_start and callees[by_start[n.call].name].may_arm}
     segments = []
     for start, kind, sync in starts:
         g = _segment_graph(f, start, by_start, callees, errors)
+        unchecked = not armed.isdisjoint(g.nodes)
         offset = _offset(kind, sync, warnings)
         ends = [(end, g.end_kind[end], 0, {}, None) for end in g.ends] + g.call_ends
         for end, end_kind, sink_extra, end_bounds, via in ends:
@@ -177,10 +190,11 @@ def _function(f, bounds, by_start, callees, errors, warnings):
                                           "its budget cannot be checked"))
                 elif offset is not None:
                     seg.budget = v - offset - spec.D
+            seg.deadline_unchecked = unchecked
             segments.append(seg)
 
     if any(n.dst in CUT for n in f.nodes.values()):
-        return FunctionResult(f.name, f.start, segments, None, has_sync=True)
+        return FunctionResult(f.name, f.start, segments, None, has_sync=True, may_arm=bool(armed))
 
     def worst(kind):
         segs = [s for s in segments if s.end_kind == kind and s.start_kind == "entry"]
@@ -194,7 +208,27 @@ def _function(f, bounds, by_start, callees, errors, warnings):
     ret = worst("return")
     to_end = {k: w for k in ("halt", "trap") if (w := worst(k)) is not None}
     return FunctionResult(f.name, f.start, segments, ret[0] if ret else None,
-                          ret[1] if ret else {}, to_end)
+                          ret[1] if ret else {}, to_end, may_arm=bool(armed))
+
+
+def _armed_moves(f):
+    """Moves that may execute while a deadline is armed, t_arm itself included:
+    a path-insensitive 'may be armed' bit from the function entry, as in S3
+    (checks.py). S4 keeps t_arm and t_clear in one function and forbids returning
+    armed, so an armed span never leaves f; a callee that arms is handled by the
+    caller through may_arm."""
+    inn, out, work = {f.start: False}, set(), [f.start]
+    while work:
+        a = work.pop()
+        n = f.nodes[a]
+        if inn[a] or n.dst == "tmr.t_arm":
+            out.add(a)
+        nxt = True if n.dst == "tmr.t_arm" else False if n.dst == "tmr.t_clear" else inn[a]
+        for e in n.succ:
+            if e.to in f.nodes and (e.to not in inn or (nxt and not inn[e.to])):
+                inn[e.to] = inn.get(e.to, False) or nxt
+                work.append(e.to)
+    return out
 
 
 def _check_t_sync_loops(f, bounds, by_start, callees, errors):
