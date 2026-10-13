@@ -438,3 +438,14 @@ def test_every_changed_file_is_hashed_however_many(tree, monkeypatch):
                                           for i in range(250)}
     line = BD._files(m["git"]["changed"])                # the display limit is only here
     assert line.startswith("many/f000.txt, ") and line.endswith(" and 240 more")
+
+
+def test_status_paths_of_every_stored_form():
+    assert [BD._path(x) for x in (" M a.txt", "?? b c.txt", "MM d.txt", "R  old.c -> new.c", ' M "q r.txt"')] == \
+        ["a.txt", "b c.txt", "d.txt", "new.c", "q r.txt"]
+    # the 2026-10-13 runs were saved by the first A5-3 version, which stripped the
+    # leading space of the first line: 'M Time_...' must still read as the full name
+    assert BD._path("M Time_Predictable_TTA.xpr") == "Time_Predictable_TTA.xpr"
+    first = {"exe": {"bytes": 1, "sha256": "d" * 64}, "bitstream_file": None,
+             "git": {"commit": "b" * 40, "dirty": True, "changed": ["M Time_Predictable_TTA.xpr"]}}
+    assert "changes: Time_Predictable_TTA.xpr" in BD.provenance_line(first)
