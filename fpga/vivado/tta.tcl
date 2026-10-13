@@ -23,6 +23,8 @@ proc tta_root {} {
     return [get_property DIRECTORY [current_project]]
 }
 
+source [file join [file dirname [file normalize [info script]]] report_common.tcl]
+
 proc tta_setup {} {
     set root [tta_root]
     set srcs [file join $root Time_Predictable_TTA.srcs]
@@ -105,6 +107,7 @@ proc tta_timing {} {
     set whs [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -hold]]
     if {$wns >= 0 && $whs >= 0} { set verdict "met" } else { set verdict "NOT met" }
     puts "tta_timing: WNS = $wns ns, WHS = $whs ns ($verdict at 100 MHz)"
+    return [list $wns $whs]
 }
 
 # Phase 5: build one plant implementation on its own (out of context, 100 MHz,
@@ -144,30 +147,32 @@ proc tta_plant_compare {} {
 # Phase 6: the same numbers as nrv_report (fpga/vivado/nrv.tcl) for the TTA
 # design, into build/vivado_tta: timing, utilisation of the whole design, the
 # core (with its instruction and data memory) and the parts outside it, and
-# the vectorless power estimate. Run after Generate Bitstream.
+# the vectorless power estimate. Run after Generate Bitstream. The printed
+# summary also goes to build/vivado_tta/report_summary.txt.
 proc tta_report {} {
-    tta_timing
+    lassign [tta_timing] wns whs
     set out [file join [tta_root] build vivado_tta]
     file mkdir $out
-    puts "tta_report: image [get_property generic [get_filesets sources_1]]"
     report_timing_summary -file [file join $out timing.rpt]
     report_utilization -hierarchical -hierarchical_depth 3 -file [file join $out utilization_hier.rpt]
     report_utilization -file [file join $out utilization.rpt]
-    report_power -file [file join $out power.rpt]
+    lassign [rpt_power [file join $out power.rpt]] warn crit
+    set now [clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S}]
+    set lines [list "tta_report: $now, WNS $wns ns, WHS $whs ns" \
+                    "tta_report: image [get_property generic [get_filesets sources_1]]"]
     foreach {name cell} {total "" core u_core imem u_core/u_imem dmem u_core/u_dmem
                          plant u_env uart u_uart din u_din} {
-        if {$cell eq ""} { set in "" } else { set in " && NAME =~ $cell/*" }
-        puts [format "tta_report: %-6s LUT %6d  FF %6d  BRAM36 %5.1f  DSP %3d" $name \
-            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == LUT$in"]] \
-            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == FLOP_LATCH$in"]] \
-            [expr {[llength [get_cells -hier -quiet -filter "REF_NAME == RAMB36E1$in"]] \
-                   + 0.5 * [llength [get_cells -hier -quiet -filter "REF_NAME == RAMB18E1$in"]]}] \
-            [llength [get_cells -hier -quiet -filter "REF_NAME =~ DSP48*$in"]]]
+        lappend lines [rpt_block tta_report $name $cell]
     }
     set w "?"
-    regexp {Total On-Chip Power \(W\)\s*\|\s*([0-9.]+)} [report_power -return_string] -> w
-    puts "tta_report: total on-chip power $w W (vectorless estimate)"
-    puts "tta_report: reports in $out"
+    set f [open [file join $out power.rpt]]
+    regexp {Total On-Chip Power \(W\)\s*\|\s*([0-9.]+)} [read $f] -> w
+    close $f
+    lappend lines "tta_report: total on-chip power $w W (vectorless estimate); report_power issued\
+ $warn WARNING and $crit CRITICAL WARNING messages (their text is in the Vivado log)"
+    foreach l $lines { puts $l }
+    rpt_save [file join $out report_summary.txt] $lines
+    puts "tta_report: reports and report_summary.txt in $out"
 }
 
 # One line per worst setup path: slack, logic levels, start -> end.
