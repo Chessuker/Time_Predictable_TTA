@@ -257,3 +257,73 @@ def test_sequence_checks():
     assert any("k = 2" in p for p in probs) and any("100001 cycles" in p for p in probs)
     assert any("0b011" in p for p in probs) and any("repeated" in p for p in probs)
     assert any("dropped" in p for p in probs)
+
+
+# ---------------------------------------------------------------- provenance (audit A5-3)
+def test_a_run_records_the_program_the_commit_and_the_bitstream_file(tmp_path, monkeypatch):
+    import hashlib
+    exe = b"\x13\x00\x00\x00" * 64
+    bit = tmp_path / "arty_neorv32_top.bit"
+    bit.write_bytes(b"bitstream")
+    monkeypatch.setattr(BD, "bitstream_path", lambda cache: bit)
+    monkeypatch.setattr(BD, "ROOT", tmp_path)
+    monkeypatch.setattr(BD, "git_state", lambda: {"commit": "a" * 40, "dirty": True,
+                                                  "changed": [" M Time_Predictable_TTA.xpr"]})
+    recs = [bt.Record(0, 98_000, 31, 176, 339, 0, 0, 0b111)]
+    prov = BD.save(tmp_path / "run", "irq_L0_asap", 1, recs, exe)["provenance"]
+    assert prov["exe"] == {"bytes": 256, "sha256": hashlib.sha256(exe).hexdigest()}
+    assert prov["bitstream_file"]["sha256"] == hashlib.sha256(b"bitstream").hexdigest()
+    saved = __import__("json").loads((tmp_path / "run" / "summary.json").read_text())
+    assert saved["provenance"] == prov
+    line = BD.provenance_line(prov)
+    assert line.startswith(f"program sha256 {prov['exe']['sha256'][:16]}, commit aaaaaaaaaa")
+    assert "uncommitted changes: Time_Predictable_TTA.xpr" in line
+
+
+def test_no_bitstream_file_and_old_runs_say_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(BD, "bitstream_path", lambda cache: tmp_path / "missing.bit")
+    prov = BD.provenance(0, b"x")
+    assert prov["bitstream_file"] is None and "bitstream file not found" in BD.provenance_line(prov)
+    assert BD.provenance_line(None) == "provenance not recorded (run made before audit A5-3)"
+
+
+def test_git_state_reads_the_real_repository():
+    g = BD.git_state()
+    assert len(g["commit"]) == 40 and int(g["commit"], 16) >= 0
+    assert isinstance(g["dirty"], bool) and (g["dirty"] == bool(g["changed"]))
+
+
+def test_run_one_hands_the_uploaded_program_to_save(tmp_path, monkeypatch):
+    (tmp_path / "exe" / "irq_L0_asap").mkdir(parents=True)
+    (tmp_path / "exe" / "irq_L0_asap" / "neorv32_exe.bin").write_bytes(b"program")
+    monkeypatch.setattr(BD, "EXE_DIR", tmp_path / "exe")
+    monkeypatch.setattr(BD, "OUT_DIR", tmp_path / "out")
+    for f in ("reset_to_bootloader", "check_bitstream", "upload_and_start"):
+        monkeypatch.setattr(BD, f, lambda *a: None)
+    monkeypatch.setattr(BD, "serial_chunks", lambda *a: iter(()))
+    monkeypatch.setattr(BD, "parse_stream", lambda chunks, n: [bt.Record(0, 98_000, 31, 176, 339, 0, 0, 0b111)])
+    seen = {}
+    monkeypatch.setattr(BD, "save", lambda path, name, cache, recs, exe=None: seen.update(exe=exe))
+
+    class Ser:
+        baudrate = 0
+
+        def reset_input_buffer(self):
+            pass
+    BD.run_one(Ser(), "irq_L0_asap", 1, 1)
+    assert seen["exe"] == b"program"
+
+
+def test_report_lists_the_provenance_of_every_run(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(BD, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(BD, "git_state", lambda: {"commit": "b" * 40, "dirty": False, "changed": []})
+    monkeypatch.setattr(BD, "bitstream_path", lambda cache: tmp_path / "none.bit")
+    recs = [bt.Record(k, 98_000 + k * A.PERIOD, 31, 176, 339, 0, 0, 0b111) for k in range(3)]
+    BD.save(tmp_path / "c1" / "irq_L0_asap", "irq_L0_asap", 1, recs, b"p")
+    BD.save(tmp_path / "c1" / "irq_L0_wait", "irq_L0_wait", 1, recs)
+    (tmp_path / "c1" / "irq_L0_wait" / "summary.json").write_text("{}")         # an old run
+    import sys
+    BD.report(sys.stdout)                                      # its default is bound at import
+    out = capsys.readouterr().out
+    assert "- c1 irq_L0_asap: program sha256" in out and "commit bbbbbbbbbb" in out
+    assert "- c1 irq_L0_wait: provenance not recorded" in out

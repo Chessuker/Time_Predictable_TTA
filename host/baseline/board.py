@@ -16,7 +16,9 @@ One run (nothing to press on the board):
   4. the program switches the UART TX to the monitor (3 Mbaud) and releases
      the first period START_DELAY = 1 s later; the port switches baud meanwhile
   5. read NRV1 records until --periods are in: from k = 0, strictly in order
-Saved in build/baseline_board/c<cache>/<name>/: records.csv, summary.json
+Saved in build/baseline_board/c<cache>/<name>/: records.csv, summary.json (with the
+provenance of the run: sha256 of the uploaded program, git commit and any
+uncommitted changes, sha256 of the bitstream file on disk)
 (host/baseline/analysis.py: statistics, record checks, model replay).
 
 A run's verdict is about the integrity of the measurement only: "integrity OK"
@@ -31,6 +33,7 @@ handler) x actuation (asap, wait = release + 1001).
 """
 import argparse
 import csv
+import hashlib
 import json
 import re
 import shlex
@@ -216,7 +219,7 @@ def describe_raw(raw):
 
 
 # ---------------------------------------------------------------- one run
-def save(path, name, cache, recs):
+def save(path, name, cache, recs, exe=None):
     path.mkdir(parents=True, exist_ok=True)
     with (path / "records.csv").open("w", newline="") as f:
         w = csv.writer(f)
@@ -224,7 +227,7 @@ def save(path, name, cache, recs):
         for r in recs:
             w.writerow([r.k, r.rel, r.start, r.sense, r.act, r.enc, r.u, r.flags, r.bg_n, r.bg_cycles])
     summary = {"name": name, "cache": cache, "config": configs(cache)[name], "git": git_describe(),
-               **evaluate(recs)}
+               "provenance": provenance(cache, exe), **evaluate(recs)}
     (path / "summary.json").write_text(json.dumps(summary, indent=1))
     return summary
 
@@ -260,6 +263,51 @@ def verdict(s):
             f"{s['n_replay_mismatches']}); {miss}")
 
 
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def bitstream_path(cache):
+    """The bitstream nrv_build writes (fpga/vivado/nrv.tcl, nrv_bit)."""
+    return ROOT / "build" / f"vivado_nrv_c{cache}" / f"nrv_c{cache}.runs" / "impl_1" / "arty_neorv32_top.bit"
+
+
+def provenance(cache, exe):
+    """What a run used, so its records can be tied to one program and one source
+    tree (audit A5-3): the uploaded executable, the git commit with the files
+    changed but not committed, and the bitstream file on disk. The FPGA is
+    programmed by hand, so the bitstream entry names the file that was there,
+    not what is on the board (check_bitstream() only checks its cache setting)."""
+    bit = bitstream_path(cache)
+    return {
+        "exe": None if exe is None else {"bytes": len(exe), "sha256": sha256(exe)},
+        "git": git_state(),
+        "bitstream_file": None if not bit.exists() else {
+            "path": bit.relative_to(ROOT).as_posix(), "sha256": sha256(bit.read_bytes()),
+            "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(bit.stat().st_mtime))},
+    }
+
+
+def git_state():
+    def git(*args):
+        return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True,
+                              timeout=10).stdout.strip()
+    try:
+        commit, changed = git("rev-parse", "HEAD"), git("status", "--porcelain", "--untracked-files=no")
+    except OSError:
+        return {"commit": "?", "dirty": None, "changed": []}
+    return {"commit": commit, "dirty": bool(changed), "changed": changed.splitlines()[:50]}
+
+
+def provenance_line(prov):
+    if not prov:
+        return "provenance not recorded (run made before audit A5-3)"
+    exe, g, bit = prov["exe"], prov["git"], prov["bitstream_file"]
+    return (f"program sha256 {exe['sha256'][:16] if exe else '?'}, commit {g['commit'][:10]}"
+            f"{' + uncommitted changes: ' + ', '.join(c[3:] for c in g['changed']) if g['dirty'] else ''}, "
+            f"bitstream file {bit['sha256'][:16] + ' (' + bit['modified'] + ')' if bit else 'not found'}")
+
+
 def git_describe():
     try:
         return subprocess.run(["git", "-C", str(ROOT), "describe", "--always", "--dirty"],
@@ -286,7 +334,7 @@ def run_one(ser, name, cache, n):
         path.mkdir(parents=True, exist_ok=True)
         (path / "raw_failed.bin").write_bytes(raw)
         raise BoardError(f"{e}\n  monitor stream: {describe_raw(raw)}\n  saved in {path / 'raw_failed.bin'}") from None
-    return save(path, name, cache, recs)
+    return save(path, name, cache, recs, exe)
 
 
 def run(port, cache, names, n):
@@ -296,6 +344,7 @@ def run(port, cache, names, n):
         for name in names:
             s = run_one(ser, name, cache, n)
             print(f"--- c{cache} {name}: {verdict(s)}")
+            print(f"    {provenance_line(s['provenance'])}")
             print(A.format_summary(s["all"], "all periods (primary), "))
             print(A.format_summary(s["steady"], "steady state k >= 1, "))
 
@@ -304,10 +353,12 @@ def report(out=sys.stdout):
     """Tables of every saved run, recomputed from its records.csv: all periods
     (primary) and steady state (k >= 1). misses = deadline misses / periods;
     integrity = sequence check and model replay (not a timing verdict)."""
-    runs = []
+    runs, provs = [], []
     for p in sorted(OUT_DIR.glob("c*/*/records.csv")):
         recs = load_records(p)
         runs.append((p.parent.parent.name, p.parent.name, evaluate(recs)))
+        js = p.parent / "summary.json"
+        provs.append(json.loads(js.read_text()).get("provenance") if js.exists() else None)
 
     def f(x):
         return f"{x['min']}/{x['p50']}/{x['p99']}/{x['max']}" if x else "-"
@@ -327,6 +378,9 @@ def report(out=sys.stdout):
             print(f"| {cache} | {name} | {integ} | {miss} | {f(d['release_start'])} | {f(d['release_sense'])} | "
                   f"{f(d['sense_act'])} | {f(d['release_act'])} | {f(d['sense_interval'])} | "
                   f"{f(d['release_interval'])} |", file=out)
+    print("\nProvenance (summary.json):", file=out)
+    for (cache, name, _), prov in zip(runs, provs):
+        print(f"- {cache} {name}: {provenance_line(prov)}", file=out)
 
 
 def main(argv=None):
