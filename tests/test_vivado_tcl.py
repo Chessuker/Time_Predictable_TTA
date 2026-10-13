@@ -63,7 +63,10 @@ proc get_msg_config {args} {
     if {[lindex $args end] eq "WARNING"} { return $::warnings }
     return 0
 }
+set ::power_calls 0
 proc report_power {args} {
+    incr ::power_calls
+    if {[lindex $args 0] ne "-file"} { error "report_power without -file: $args" }
     incr ::warnings 2
     set f [open [lindex $args end] w]
     puts $f "| Total On-Chip Power (W)  | 0.117        |"
@@ -81,15 +84,20 @@ puts [rpt_slice_luts {{| LUT as Logic | 12 |}}]
     assert out.split() == ["1882", "3609", "?"]                # never a guess
 
 
-@pytest.mark.parametrize("rpt, used", [("vivado_tta", 1882), ("vivado_nrv_c1", 3609), ("vivado_nrv_c0", 2965)])
-def test_slice_luts_of_the_saved_phase6_reports(tmp_path, rpt, used):
+@pytest.mark.parametrize("rpt", ["vivado_tta", "vivado_nrv_c1", "vivado_nrv_c0"])
+def test_slice_luts_of_the_saved_reports(tmp_path, rpt):
+    # whatever build is in build/ now: the Tcl parser must agree with a plain
+    # reading of the "Slice LUTs" row of the same file
+    import re
     path = ROOT / "build" / rpt / "utilization.rpt"
     if not path.exists():
-        pytest.skip("Phase 6 Vivado reports not in build/")
+        pytest.skip("no Vivado reports in build/")
+    rows = [line for line in path.read_text().splitlines() if line.startswith("| Slice LUTs")]
+    expected = re.split(r"\s*\|\s*", rows[0].strip("| "))[1]
     out = tcl(f"""source {q(VIVADO / "report_common.tcl")}
 set f [open {q(path)}]; puts [rpt_slice_luts [read $f]]; close $f
 """, tmp_path)
-    assert out.strip() == str(used)
+    assert out.strip() == expected and expected.isdigit()
 
 
 def test_block_line_reports_slice_luts_and_the_cell_count(tmp_path):
@@ -106,7 +114,7 @@ puts [rpt_block tta_report uart u_uart]
     assert "Slice LUTs      ?" in lines[2]                     # no table for that cell: "?"
 
 
-def test_power_counts_the_warnings_it_issues(tmp_path):
+def test_power_counts_the_warnings_of_its_own_call(tmp_path):
     out = tcl(f"""source {q(VIVADO / "report_common.tcl")}
 set ::util_text {{}}
 {STUBS}
@@ -128,7 +136,9 @@ proc nrv_timing {{}} {{ return {{0.339 0.027}} }}
 proc report_timing_summary {{args}} {{}}
 proc nrv_dir {{cache}} {{ return {q(tmp_path)} }}
 nrv_report 1
+puts "power_calls $::power_calls"
 """, tmp_path)
+    assert "power_calls 1" in out                               # one report_power, the one that wrote power.rpt
     summary = (tmp_path / "report_summary.txt").read_text().splitlines()
     assert summary[0].startswith("nrv_report: c1, ") and summary[0].endswith("WNS 0.339 ns, WHS 0.027 ns")
     assert summary[1].startswith("nrv_report: total  Slice LUTs   1882 (LUT cells")
@@ -149,7 +159,9 @@ proc tta_timing {{}} {{ return {{0.429 0.056}} }}
 proc report_timing_summary {{args}} {{}}
 proc get_filesets {{args}} {{}}
 tta_report
+puts "power_calls $::power_calls"
 """, tmp_path)
+    assert "power_calls 1" in out                               # one report_power, the one that wrote power.rpt
     summary = (tmp_path / "build" / "vivado_tta" / "report_summary.txt").read_text().splitlines()
     assert summary[0].endswith("WNS 0.429 ns, WHS 0.056 ns")
     assert summary[2].startswith("tta_report: total  Slice LUTs   1882")

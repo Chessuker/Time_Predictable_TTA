@@ -44,7 +44,11 @@ proc rpt_msg_count {severity} {
 
 # report_power into file, and how many WARNING and CRITICAL WARNING messages
 # it issued (audit A6-5: Vivado prints them to the console and the log, not to
-# the report, and has no Tcl call that returns their text).
+# the report, and has no Tcl call that returns their text). This is the only
+# report_power of nrv_report and tta_report: they read the total from the
+# file it wrote, so the count belongs to the call that made power.rpt. The
+# implementation run (Generate Bitstream, nrv_build) runs its own report_power
+# into the run directory; that one is not counted here.
 proc rpt_power {file} {
     set w0 [rpt_msg_count WARNING]
     set c0 [rpt_msg_count {CRITICAL WARNING}]
