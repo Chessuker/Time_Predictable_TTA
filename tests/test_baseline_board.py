@@ -260,31 +260,94 @@ def test_sequence_checks():
 
 
 # ---------------------------------------------------------------- provenance (audit A5-3)
-def test_a_run_records_the_program_the_commit_and_the_bitstream_file(tmp_path, monkeypatch):
-    import hashlib
-    exe = b"\x13\x00\x00\x00" * 64
-    bit = tmp_path / "arty_neorv32_top.bit"
-    bit.write_bytes(b"bitstream")
-    monkeypatch.setattr(BD, "bitstream_path", lambda cache: bit)
+GIT_BUILD = {"commit": "a" * 40, "dirty": True,
+             "changed": [" M Time_Predictable_TTA.xpr", "?? baseline/sw/ctrl/extra.h"]}
+
+
+@pytest.fixture
+def tree(tmp_path, monkeypatch):
+    """A repository root with baseline/sw sources and a built executable."""
+    sw = tmp_path / "baseline" / "sw" / "ctrl"
+    sw.mkdir(parents=True)
+    (sw / "main.c").write_bytes(b"int main(void) { return 0; }\n")
+    (sw / "extra.h").write_bytes(b"#define X 1\n")                  # untracked in GIT_BUILD
+    out = tmp_path / "build" / "baseline_exe" / "irq_L0_asap"
+    out.mkdir(parents=True)
+    (out / "neorv32_exe.bin").write_bytes(b"\x13\x00\x00\x00" * 64)
     monkeypatch.setattr(BD, "ROOT", tmp_path)
-    monkeypatch.setattr(BD, "git_state", lambda: {"commit": "a" * 40, "dirty": True,
-                                                  "changed": [" M Time_Predictable_TTA.xpr"]})
-    recs = [bt.Record(0, 98_000, 31, 176, 339, 0, 0, 0b111)]
-    prov = BD.save(tmp_path / "run", "irq_L0_asap", 1, recs, exe)["provenance"]
-    assert prov["exe"] == {"bytes": 256, "sha256": hashlib.sha256(exe).hexdigest()}
-    assert prov["bitstream_file"]["sha256"] == hashlib.sha256(b"bitstream").hexdigest()
-    saved = __import__("json").loads((tmp_path / "run" / "summary.json").read_text())
-    assert saved["provenance"] == prov
+    monkeypatch.setattr(BD, "SW_SOURCES", tmp_path / "baseline" / "sw")
+    monkeypatch.setattr(BD, "EXE_DIR", tmp_path / "build" / "baseline_exe")
+    monkeypatch.setattr(BD, "OUT_DIR", tmp_path / "build" / "baseline_board")
+    monkeypatch.setattr(BD, "bitstream_path", lambda cache: tmp_path / "arty_neorv32_top.bit")
+    monkeypatch.setattr(BD, "git_state", lambda repo=None: GIT_BUILD if repo is None else
+                        {"commit": "e" * 40, "dirty": False, "changed": []})
+    return tmp_path, out
+
+
+def fake_board(monkeypatch, seen=None):
+    """run_one without a board: every serial step is a stand-in."""
+    for f in ("reset_to_bootloader", "check_bitstream", "upload_and_start"):
+        monkeypatch.setattr(BD, f, lambda *a: None)
+    monkeypatch.setattr(BD, "serial_chunks", lambda *a: iter(()))
+    monkeypatch.setattr(BD, "parse_stream", lambda chunks, n: [bt.Record(0, 98_000, 31, 176, 339, 0, 0, 0b111)])
+
+    class Ser:
+        baudrate = 0
+
+        def reset_input_buffer(self):
+            pass
+    return Ser()
+
+
+def test_the_build_manifest_is_bound_to_the_executable(tree):
+    import hashlib
+    root, out = tree
+    m = BD.write_manifest("irq_L0_asap", out, {"TRIG": 0}, "riscv-none-elf-gcc 15.2.0")
+    exe = (out / "neorv32_exe.bin").read_bytes()
+    assert m["exe"] == {"bytes": 256, "sha256": hashlib.sha256(exe).hexdigest()}
+    assert m["git"] == GIT_BUILD and m["neorv32"]["commit"] == "e" * 40 and m["toolchain"].startswith("riscv")
+    assert m["sources"] == {"baseline/sw/ctrl/extra.h": hashlib.sha256(b"#define X 1\n").hexdigest(),
+                            "baseline/sw/ctrl/main.c": hashlib.sha256(b"int main(void) { return 0; }\n").hexdigest()}
+    assert __import__("json").loads((out / "manifest.json").read_text()) == m
+
+
+def test_a_source_changed_after_the_build_does_not_change_the_recorded_build(tree, monkeypatch):
+    root, out = tree
+    built = BD.write_manifest("irq_L0_asap", out, {}, "gcc")
+    (root / "baseline" / "sw" / "ctrl" / "main.c").write_bytes(b"int main(void) { return 1; }\n")  # edited after
+    monkeypatch.setattr(BD, "git_state", lambda repo=None: {"commit": "c" * 40, "dirty": False, "changed": []})
+    s = BD.run_one(fake_board(monkeypatch), "irq_L0_asap", 1, 1)
+    prov = s["provenance"]
+    assert prov["build"] == built                                 # the state the executable came from
+    assert prov["build"]["git"]["commit"] == "a" * 40 and prov["run"]["git"]["commit"] == "c" * 40
+    assert prov["sources_changed_since_build"] == ["baseline/sw/ctrl/main.c"]
     line = BD.provenance_line(prov)
-    assert line.startswith(f"program sha256 {prov['exe']['sha256'][:16]}, commit aaaaaaaaaa")
-    assert "uncommitted changes: Time_Predictable_TTA.xpr" in line
+    assert "from commit aaaaaaaaaa + changes: Time_Predictable_TTA.xpr, baseline/sw/ctrl/extra.h" in line
+    assert "(sources changed since the build: baseline/sw/ctrl/main.c)" in line
 
 
-def test_no_bitstream_file_and_old_runs_say_so(tmp_path, monkeypatch):
-    monkeypatch.setattr(BD, "bitstream_path", lambda cache: tmp_path / "missing.bit")
-    prov = BD.provenance(0, b"x")
-    assert prov["bitstream_file"] is None and "bitstream file not found" in BD.provenance_line(prov)
-    assert BD.provenance_line(None) == "provenance not recorded (run made before audit A5-3)"
+def test_an_executable_its_manifest_does_not_describe_is_refused(tree, monkeypatch):
+    root, out = tree
+    BD.write_manifest("irq_L0_asap", out, {}, "gcc")
+    (out / "neorv32_exe.bin").write_bytes(b"rebuilt without a manifest")
+    with pytest.raises(BD.BoardError, match="not the executable its manifest describes"):
+        BD.run_one(fake_board(monkeypatch), "irq_L0_asap", 1, 1)
+    (out / "manifest.json").unlink()
+    with pytest.raises(BD.BoardError, match="no build manifest"):
+        BD.run_one(fake_board(monkeypatch), "irq_L0_asap", 1, 1)
+
+
+def test_git_state_keeps_the_first_status_line_whole(monkeypatch):
+    # 'git status --porcelain' starts with a space for a file changed in the work tree;
+    # stripping the output used to cut the first character of that file name
+    class R:
+        def __init__(self, out):
+            self.stdout = out
+    outs = iter([R("f" * 40 + "\n"), R(" M Time_Predictable_TTA.xpr\n?? notes.txt\n")])
+    monkeypatch.setattr(BD.subprocess, "run", lambda *a, **k: next(outs))
+    g = BD.git_state()
+    assert g == {"commit": "f" * 40, "dirty": True, "changed": [" M Time_Predictable_TTA.xpr", "?? notes.txt"]}
+    assert BD._files(g["changed"]) == "Time_Predictable_TTA.xpr, notes.txt"
 
 
 def test_git_state_reads_the_real_repository():
@@ -293,37 +356,24 @@ def test_git_state_reads_the_real_repository():
     assert isinstance(g["dirty"], bool) and (g["dirty"] == bool(g["changed"]))
 
 
-def test_run_one_hands_the_uploaded_program_to_save(tmp_path, monkeypatch):
-    (tmp_path / "exe" / "irq_L0_asap").mkdir(parents=True)
-    (tmp_path / "exe" / "irq_L0_asap" / "neorv32_exe.bin").write_bytes(b"program")
-    monkeypatch.setattr(BD, "EXE_DIR", tmp_path / "exe")
-    monkeypatch.setattr(BD, "OUT_DIR", tmp_path / "out")
-    for f in ("reset_to_bootloader", "check_bitstream", "upload_and_start"):
-        monkeypatch.setattr(BD, f, lambda *a: None)
-    monkeypatch.setattr(BD, "serial_chunks", lambda *a: iter(()))
-    monkeypatch.setattr(BD, "parse_stream", lambda chunks, n: [bt.Record(0, 98_000, 31, 176, 339, 0, 0, 0b111)])
-    seen = {}
-    monkeypatch.setattr(BD, "save", lambda path, name, cache, recs, exe=None: seen.update(exe=exe))
-
-    class Ser:
-        baudrate = 0
-
-        def reset_input_buffer(self):
-            pass
-    BD.run_one(Ser(), "irq_L0_asap", 1, 1)
-    assert seen["exe"] == b"program"
+def test_no_bitstream_file_old_runs_and_first_version_runs_say_so(tree):
+    assert BD.provenance(0, b"x")["bitstream_file"] is None
+    assert BD.provenance_line(None) == "provenance not recorded (run made before audit A5-3)"
+    first = {"exe": {"bytes": 1, "sha256": "d" * 64}, "bitstream_file": None,
+             "git": {"commit": "b" * 40, "dirty": True, "changed": ["M Time_Predictable_TTA.xpr"]}}
+    assert "no build manifest; at run time commit bbbbbbbbbb" in BD.provenance_line(first)
 
 
-def test_report_lists_the_provenance_of_every_run(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(BD, "OUT_DIR", tmp_path)
-    monkeypatch.setattr(BD, "git_state", lambda: {"commit": "b" * 40, "dirty": False, "changed": []})
-    monkeypatch.setattr(BD, "bitstream_path", lambda cache: tmp_path / "none.bit")
+def test_report_lists_the_provenance_of_every_run(tree, monkeypatch, capsys):
+    root, out = tree
+    BD.write_manifest("irq_L0_asap", out, {}, "gcc")
     recs = [bt.Record(k, 98_000 + k * A.PERIOD, 31, 176, 339, 0, 0, 0b111) for k in range(3)]
-    BD.save(tmp_path / "c1" / "irq_L0_asap", "irq_L0_asap", 1, recs, b"p")
-    BD.save(tmp_path / "c1" / "irq_L0_wait", "irq_L0_wait", 1, recs)
-    (tmp_path / "c1" / "irq_L0_wait" / "summary.json").write_text("{}")         # an old run
+    exe = (out / "neorv32_exe.bin").read_bytes()
+    BD.save(BD.OUT_DIR / "c1" / "irq_L0_asap", "irq_L0_asap", 1, recs, exe, BD.load_manifest("irq_L0_asap", exe))
+    BD.save(BD.OUT_DIR / "c1" / "irq_L0_wait", "irq_L0_wait", 1, recs)
+    (BD.OUT_DIR / "c1" / "irq_L0_wait" / "summary.json").write_text("{}")        # an old run
     import sys
     BD.report(sys.stdout)                                      # its default is bound at import
-    out = capsys.readouterr().out
-    assert "- c1 irq_L0_asap: program sha256" in out and "commit bbbbbbbbbb" in out
-    assert "- c1 irq_L0_wait: provenance not recorded" in out
+    out_text = capsys.readouterr().out
+    assert "- c1 irq_L0_asap: program sha256" in out_text and "from commit aaaaaaaaaa" in out_text
+    assert "- c1 irq_L0_wait: provenance not recorded" in out_text

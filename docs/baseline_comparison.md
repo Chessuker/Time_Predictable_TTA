@@ -235,8 +235,12 @@ and LUT cells per block, power, number of `report_power` warnings) to
 `report_summary.txt` next to the reports; keep the Vivado log of the session
 for the text of the warnings.
 
-Every board run records in its `summary.json` the sha256 of the uploaded
-program, the git commit with any uncommitted changes, and the sha256 of the
-bitstream file on disk (audit A5-3); `py -m host.baseline.board report`
-lists them under the tables. The 14 runs in `baseline_board_results.md`
-were made before this and have none.
+Provenance (audit A5-3): `py -m host.baseline.board build` writes, next to
+each executable, `manifest.json` with what it was built from (git commit,
+tracked and untracked changes, sha256 of every file under `baseline/sw`, the
+NEORV32 submodule commit, the GCC version) bound to the executable's sha256.
+`run` refuses an executable its manifest does not describe and records the
+manifest, the sources changed since the build, the git state at run time and
+the sha256 of the bitstream file on disk in `summary.json`;
+`py -m host.baseline.board report` lists them under the tables. The 14 runs
+in `baseline_board_results.md` were made before this and have none.
