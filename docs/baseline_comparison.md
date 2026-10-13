@@ -7,11 +7,27 @@ the deadline is release + 2,000 cycles and the fixed actuation slot is
 release + 1,001. Release means the anchor on the TTA and the MTIMECMP match
 on NEORV32.
 
+> **Status after audit A5-1 (2026-10-13).** The NEORV32 XBUS memory was
+> corrected: every transaction now pays FIRST_LAT, as the design says.
+> Before, a new transaction that started while the bus cycle was still up
+> was served at BURST_LAT 1, which with the caches off hit 30 to 50 % of the
+> accesses of these programs. What that means for this page:
+> - **Polling (simulation): measured again.** The section below uses the
+>   sweep rerun on the corrected memory.
+> - **Board timing, deadline misses and resources: historical.** The NEORV32
+>   board tables, the numbers quoted from them, and the Vivado resource,
+>   fmax and power figures come from the bitstreams built before the fix.
+>   They are kept unchanged and are not results of the corrected memory. The
+>   c0 rows ran on a much faster memory than the model states; the c1 rows
+>   are affected only by a few transactions per run, but that is not shown
+>   until they are measured again. Replacing them needs a Vivado rebuild of
+>   both bitstreams and the 14 board runs.
+
 | | TTA | NEORV32 baseline |
 |---|---|---|
 | core | this project, 1 move per cycle, constant-time ISA | NEORV32 v1.13.6, rv32imc + Zicntr |
 | program | hand-written TTA assembly (`control.tta`, `control_sw.tta`; `control_sw` is 112 code words) | C, xPack GCC 15.2.0, -O2 (`baseline/sw/ctrl`) |
-| memory | on-chip, 4,096 words of code and 4,096 of data, fixed latency | 64 KB code + 64 KB data on XBUS, FIRST_LAT 10, BURST_LAT 1, behind I$/D$ (64 x 64 B, direct-mapped) or with the caches off |
+| memory | on-chip, 4,096 words of code and 4,096 of data, fixed latency | 64 KB code + 64 KB data on XBUS: FIRST_LAT 10 for the first word of every transaction (single access or line burst), BURST_LAT 1 for the further words of a burst; behind I$/D$ (64 x 64 B, direct-mapped) or with the caches off |
 | release | `t_wait` on the anchor, `t_advance` adds the period in hardware | machine timer interrupt from MTIMECMP in `xbus_hil` |
 | background work | none | L0 none, L1d D$ thrashing, L1di L1d + code (cache on only), L2 L1d + a GPTMR interrupt at 7300.3 Hz |
 
@@ -52,6 +68,9 @@ The TTA rows come from three board runs of Phase 5:
   the setpoint to match din, and both held.
 
 ## Timing on the board
+
+The NEORV32 rows are historical (memory before the A5-1 fix, see the status
+note above).
 
 All periods (period 0 included), cycles from the release, min / p50 / p99 /
 max. Sense interval = consecutive SENSE minus 100,000 (the plan's period
@@ -111,17 +130,21 @@ no common N exists:
   configuration alone;
 - c1 L1di: no tested N passes both. Timing passes at N <= 6 (R 0.9487 at
   N = 6, failing at 7 and 8), and R >= 0.98 first at N = 32 (B 4,512);
-- c0 L1d: no tested N passes both. Timing passes at N <= 9 (R 0.9354 at
-  N = 9, failing from 10), and R >= 0.98 first at N = 27 (B 2,840).
+- c0 L1d: no tested N passes both. Timing passes at N <= 5 (R 0.8716 at
+  N = 5, failing from 6), and R >= 0.98 first at N = 29 (B 3,582). Before
+  the A5-1 fix the sweep had shown N <= 9 and N = 27; c1 did not change.
 
 N tested: c1 L1d 1, 2, 4, 8-16, 32, 64; c1 L1di 1, 2, 4-8, 16, 32, 64;
-c0 L1d 1, 2, 4, 8-32, 64. The other values (for example c1 L1di 9-15 and
+c0 L1d 1, 2, 4-32, 64. The other values (for example c1 L1di 9-15 and
 17-31) were not run, so this is not a proof that no N passes all three.
 Across the tested values a larger chunk buys background throughput with a
 longer release->act bound. Details: `docs/baseline_measurement.md` section
 3.6. Polling was not run on the board.
 
 ## Resources, fmax and power
+
+Historical for NEORV32: the bitstreams of the board runs, built before the
+A5-1 fix changed `xbus_mem` (it now also reads `cti`).
 
 Routed designs, Vivado 2025.2, `xc7a100tcsg324-1`, constraint 10 ns. The TTA
 build loads `control_sw` (`tta_report` in `fpga/vivado/tta.tcl`), NEORV32

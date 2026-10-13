@@ -30,6 +30,9 @@ from .test_baseline_ctrl import GPTMR_PERIOD, MAX_CYCLES, PERIOD, SHORT, START_D
 from .test_lockstep import pytestmark  # noqa: F401  (same skip rule)
 
 L_MIP = 4                        # cycles from a release until a poll of mip reads MTIP = 1 (upper bound)
+# measured (lo, hi) bracket of L_MIP per cache: with the caches off the polls are ~25 cycles apart,
+# so the measurement only pins it to 4..6 (both agree with 4)
+MIP_BRACKET = {1: (4, 4), 0: (4, 6)}
 FUNC_CHUNK = 4                   # chunk size of the functional tests (not the selected one)
 CSRRCI, CSRSI = 0x3004_7073, 0x3004_6073     # csrrci x0?, mstatus, 8 / csrsi mstatus, 8 (funct3 is what counts)
 
@@ -159,8 +162,7 @@ def test_trace_port_does_not_change_timing(cache):
 @pytest.mark.parametrize("cache", [1, 0])
 def test_mtip_latency(cache):
     _, recs, itr, *_ = traced("poll_L0_lmip", cache, 300_000 + 21 * PERIOD, TRIG=1, LOAD=0, ACT=0, CHUNK=1)
-    lo, hi = PL.mip_latency(PL.detections(recs[:20], itr))
-    assert hi == L_MIP and lo is not None and lo <= hi
+    assert PL.mip_latency(PL.detections(recs[:20], itr)) == MIP_BRACKET[cache]
 
 
 @pytest.mark.parametrize("cache, load, chunk", [(1, 2, 5), (1, 1, 9), (0, 1, 12)])
@@ -179,11 +181,11 @@ def test_chunks_that_do_not_divide_the_sweep(cache, load, chunk):
         last_clear = max(i for i, (_, a) in enumerate(itr.stores) if a == thrash[1] - 4)
         units = [(a - thrash[0]) // 64 for _, a in itr.stores[last_clear + 1:]]
         assert [(pc - code[0]) // 32 for _, pc in itr.pieces[:600]] == units[:600]
-    v = PL.audit(recs, itr, chunk, (L_MIP, L_MIP), load)
+    v = PL.audit(recs, itr, chunk, MIP_BRACKET[cache], load)
     assert {k: v[k] for k in v if k not in ("release_position", "a_prev_after_release")} == \
         {"chunk_incomplete": 0, "l_mip": 0, "p_interval": 0, "w_outside_section": 0, "undetected": 0,
          "missing_events": 0}
-    t = PL.timing(recs, itr, L_MIP)
+    t = PL.timing(recs, itr, MIP_BRACKET[cache][1])
     assert t["detection_bound_holds"]
     u = PL.units(recs, itr)
     assert u["periods"] == n - 1 and u["data_units"] > 0

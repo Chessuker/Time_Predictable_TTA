@@ -41,7 +41,8 @@ CTRL = ROOT / "baseline" / "sw" / "ctrl"
 OUT = BUILD / "baseline_ctrl"
 PERIOD = 100_000                 # real period: the cache checks depend on it (sweeps per period)
 START_DELAY = 20_000
-MAX_CYCLES = 650_000             # first release near 98k, then 5 more
+MAX_CYCLES = 700_000             # first release near 98k (caches on) or 260k (off: start-up runs
+                                 # from the slow memory), then the records of at least 4 periods
 LOADS = {"L0": 0, "L1d": 1, "L1di": 2}
 ISR_SYMBOLS = ("ctrl_vectors", "ctrl_mti_entry", "ctrl_isr", "fpid_step")
 
@@ -226,7 +227,8 @@ def test_l1_sweeps_fit_between_releases(runs, name):
 # per body. Functional checks and first timings only: 120 periods cover 120 of
 # the 6,849 relative phases of the GPTMR and the release.
 GPTMR_PERIOD = 13_698
-BODY = {1: 502, 0: 1063}         # BG_IN..BG_OUT cycles, caches on / off (no memory access in the loop)
+BODY = {1: 502, 0: 2082}         # BG_IN..BG_OUT cycles, caches on / off (no memory access in the loop;
+                                 # off: every fetch pays FIRST_LAT, 1063 before the A5-1 fix)
 N_L2 = 120
 
 

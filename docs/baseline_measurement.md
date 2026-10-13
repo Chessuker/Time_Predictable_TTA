@@ -247,33 +247,36 @@ not reused.
 ### 3.6 Outcome: no tested N meets the criteria
 
 The 120-period sweep (N = 1, 2, 4, 8, 16, 32, 64, extended to every N in
-c1 L1d 9-15, c1 L1di 5-7, c0 L1d 9-31; table in
+c1 L1d 9-15, c1 L1di 5-7, c0 L1d 5-31; table in
 `docs/baseline_poll_sweep_120.md`) found no N that meets both criteria in
 every selection configuration. Every run has a clean integrity check and
-audit and no missing event.
+audit and no missing event. The sweep was rerun on 2026-10-13 on the
+corrected XBUS memory (audit A5-1); the c1 runs came out identical to the
+first sweep, the c0 runs all changed (old and new values side by side in
+`docs/baseline_poll_sweep_120.md`).
 
 | config | largest tested N passing timing | R there | smallest tested N with R >= 0.98 | B(N) there |
 |---|---|---|---|---|
 | c1 L1d | N = 10 (B 1,432, observed 1,316) | 0.9810 | N = 10 | 1,432 |
 | c1 L1di | N = 6 (B 1,451, observed 1,296) | 0.9487 | N = 32 | 4,512 |
-| c0 L1d | N = 9 (B 1,454, observed 1,390) | 0.9354 | N = 27 | 2,840 |
+| c0 L1d | N = 5 (B 1,422, observed 1,281) | 0.8716 | N = 29 | 3,582 |
 
 c1 L1d alone passes at N = 10. In c1 L1di and c0 L1d no tested N passes
 both: at every tested N where timing passes, R is below 0.95, and at every
-tested N where R passes, B(N) is above 2,800.
+tested N where R passes, B(N) is above 3,500.
 
 The result covers the N tested: c1 L1d 1, 2, 4, 8-16, 32, 64; c1 L1di 1,
-2, 4-8, 16, 32, 64; c0 L1d 1, 2, 4, 8-32, 64. The other values were not
+2, 4-8, 16, 32, 64; c0 L1d 1, 2, 4-32, 64. The other values were not
 run. B(N) and R mostly grow with N over the tested values, but not strictly (c0 L1d:
-R 0.9733 at N = 16, 0.9670 at N = 17), so the trend is no proof for the
-untested ones.
+R 0.8810 at N = 2, 0.8462 at N = 4; observed maximum 3,607 at N = 31,
+3,600 at N = 32), so the trend is no proof for the untested ones.
 
 The 1,000-period reruns were not made, because they cannot change the
 outcome for the N tested. The simulation is deterministic from cycle 0
 with the same binary, so the first 120 periods of a 1,000-period run are
 the runs above, and B(N) and the observed maximum, both maxima, can only
 stay or grow: no N that fails timing can pass. The tested N that pass
-timing in c1 L1di (<= 6) and c0 L1d (<= 9) have R between 0.73 and 0.95, outside the [0.975, 0.985]
+timing in c1 L1di (<= 6) and c0 L1d (<= 5) have R between 0.67 and 0.95, outside the [0.975, 0.985]
 band where a rerun could change the R verdict.
 
 The thresholds are unchanged. No N is chosen, so polling mode has no board

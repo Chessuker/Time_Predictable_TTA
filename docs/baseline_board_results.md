@@ -1,7 +1,23 @@
 # Phase 6 board runs: NEORV32 baseline, interrupt mode
 
+> **Historical results (pre-A5-1 memory).** These 14 runs were made on
+> 2026-10-11 with the bitstreams built that day, whose `xbus_mem` (as
+> committed in 9837fde) charged FIRST_LAT only to the first access after
+> `cyc` rose. The XBUS keeps `cyc` high while a request is pending and
+> strobes the next request in the acknowledge cycle, so a new transaction
+> that started inside an unbroken `cyc` was served at BURST_LAT 1 instead of
+> FIRST_LAT 10 (audit A5-1, fixed in audit Round B). In the simulation bus
+> traces of the same interrupt-mode programs this hit 30 to 50 % of the
+> accesses with the caches off, and 1 to 19 line fills or single accesses
+> per trace with them on. The caches-off rows below
+> therefore ran on a much faster memory than the documented model, and every
+> row is a result of the old memory, not of the corrected one. They are kept
+> unchanged as the historical record. Replacing them needs a Vivado rebuild
+> of both bitstreams and the 14 board runs again; neither has been done.
+
 Arty A7-100T, 100 MHz, NEORV32 v1.13.6 (rv32imc + Zicntr), XBUS memory with
-FIRST_LAT 10 and BURST_LAT 1. 14 runs of 10,000 periods (100,000 cycles each),
+FIRST_LAT 10 and BURST_LAT 1 as built then (see the note above). 14 runs of
+10,000 periods (100,000 cycles each),
 recorded on 2026-10-11 with
 
     py -m host.baseline.board run <port> --cache 1
