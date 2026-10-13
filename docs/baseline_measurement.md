@@ -261,7 +261,10 @@ first sweep, the c0 runs all changed (old and new values side by side in
 | c1 L1di | N = 6 (B 1,451, observed 1,296) | 0.9487 | N = 32 | 4,512 |
 | c0 L1d | N = 5 (B 1,422, observed 1,281) | 0.8716 | N = 29 | 3,582 |
 
-c1 L1d alone passes at N = 10. In c1 L1di and c0 L1d no tested N passes
+c1 L1d alone passes at N = 10, in the 120-period runs only: its R (0.9810)
+is inside the band [0.975, 0.985] where the rule reruns an N with 1,000
+periods before choosing it, and that rerun was not made (see below), so this
+pass is provisional (audit A6-2). In c1 L1di and c0 L1d no tested N passes
 both: at every tested N where timing passes, R is below 0.95, and at every
 tested N where R passes, B(N) is above 3,500.
 

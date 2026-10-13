@@ -256,7 +256,7 @@ Soft-core ทั่วไปบนบอร์ดเดียวกัน (เ�
 - [x] Baseline soft-core รัน control law + plant เดียวกัน *(NEORV32 v1.13.6 + C PID ที่ตรงกับ `FixedPID` ทุก bit, plant RTL ตัวเดียวกัน, host replay model ได้ตรงทุก period ใน 14 run บนบอร์ด ดู docs/baseline_comparison.md)*
 - [x] วัด: period jitter, sense-to-actuate jitter (min / p50 / p99 / max), deadline miss count *(timestamp ด้วยฮาร์ดแวร์ใน `xbus_hil` ทุก period, ตารางใน docs/baseline_board_results.md นิยามใน docs/baseline_measurement.md)*
 - [x] ทดสอบ baseline ทั้งแบบมีและไม่มี background workload, เปิด/ปิด cache *(L0/L1d/L1di/L2 × asap/wait × cache เปิด/ปิด, 10,000 period ต่อ run; polling sweep ไม่มี chunk size ที่ผ่านเกณฑ์ที่ประกาศไว้ จึงไม่ได้รันบนบอร์ด)*
-- [x] Resource utilization, fmax, power ของ TTA core เทียบ baseline *(ทั้ง design ลบ plant: TTA 1748 LUT / 1369 FF, NEORV32 3635 / 2482 เมื่อเปิด cache; fmax ประมาณจาก WNS; power เป็นค่าประมาณแบบ vectorless เท่านั้น)*
+- [x] Resource utilization, fmax, power ของ TTA core เทียบ baseline *(ทั้ง design ลบ plant วัด 2026-10-13 หลังแก้ audit: TTA 1535 Slice LUTs / 1369 FF, NEORV32 3227 / 2483 เมื่อเปิด cache; fmax ประมาณจาก WNS; power เป็นค่าประมาณแบบ vectorless เท่านั้น)*
 
 รายงานตัวเลขอย่างตรงไปตรงมา รวมกรณีที่ baseline ทำได้ดี
 
