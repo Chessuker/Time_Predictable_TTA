@@ -295,7 +295,7 @@ def changed_hashes(repo, state):
     committed content only; this pins what was on disk besides it."""
     out = {}
     for line in state["changed"]:
-        path = line[3:].split(" -> ")[-1].strip('"')            # a rename names old -> new
+        path = _path(line)
         f = Path(repo) / path
         out[path] = sha256(f.read_bytes()) if f.is_file() else None
     return out
@@ -370,8 +370,16 @@ def git_state(repo=None):
 SHOW_FILES = 10                  # console and report lines only; the manifest keeps every file
 
 
+def _path(line):
+    """The path of one 'git status --porcelain' line ('XY path', a rename
+    'XY old -> new'). Runs saved by the first A5-3 version stored the first
+    line stripped ('M path'), so the two status letters are not assumed."""
+    path = line[3:] if len(line) > 2 and line[2] == " " else line.split(None, 1)[-1]
+    return path.split(" -> ")[-1].strip('"')
+
+
 def _files(lines):
-    names = [c[3:] for c in lines]
+    names = [_path(c) for c in lines]
     more = len(names) - SHOW_FILES
     return ", ".join(names[:SHOW_FILES]) + (f" and {more} more" if more > 0 else "")
 
