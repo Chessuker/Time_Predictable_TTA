@@ -364,11 +364,16 @@ def git_state(repo=None):
         changed = git("status", "--porcelain", "--untracked-files=all").splitlines()   # keep the leading space
     except OSError:
         return {"commit": "?", "dirty": None, "changed": []}
-    return {"commit": commit, "dirty": bool(changed), "changed": changed[:200]}
+    return {"commit": commit, "dirty": bool(changed), "changed": changed}   # complete: the manifest hashes each
+
+
+SHOW_FILES = 10                  # console and report lines only; the manifest keeps every file
 
 
 def _files(lines):
-    return ", ".join(c[3:] for c in lines)
+    names = [c[3:] for c in lines]
+    more = len(names) - SHOW_FILES
+    return ", ".join(names[:SHOW_FILES]) + (f" and {more} more" if more > 0 else "")
 
 
 def provenance_line(prov):

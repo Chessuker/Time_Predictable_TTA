@@ -260,6 +260,7 @@ def test_sequence_checks():
 
 
 # ---------------------------------------------------------------- provenance (audit A5-3)
+REAL_GIT_STATE = BD.git_state                 # before any fixture replaces it
 GIT_BUILD = {"commit": "a" * 40, "dirty": True,
              "changed": [" M Time_Predictable_TTA.xpr", "?? baseline/sw/ctrl/extra.h"]}
 
@@ -412,3 +413,28 @@ def test_report_lists_the_provenance_of_every_run(tree, monkeypatch, capsys):
     out_text = capsys.readouterr().out
     assert "- c1 irq_L0_asap: program sha256" in out_text and "from commit aaaaaaaaaa" in out_text
     assert "- c1 irq_L0_wait: provenance not recorded" in out_text
+
+
+def test_every_changed_file_is_hashed_however_many(tree, monkeypatch):
+    # git_state used to keep only the first 200 status lines, so a larger dirty
+    # tree lost the hashes of the rest while still saying it was dirty
+    import hashlib
+    root, out = tree
+    many = root / "many"
+    many.mkdir()
+    for i in range(250):
+        (many / f"f{i:03}.txt").write_bytes(f"{i}\n".encode())
+
+    class R:
+        def __init__(self, out):
+            self.stdout = out
+    status = "".join(f"?? many/f{i:03}.txt\n" for i in range(250))
+    outs = iter([R("a" * 40 + "\n"), R(status), R("e" * 40 + "\n"), R("")])   # repository, then submodule
+    monkeypatch.setattr(BD, "git_state", REAL_GIT_STATE)          # the real one, over a fake git
+    monkeypatch.setattr(BD.subprocess, "run", lambda *a, **k: next(outs))
+    m = BD.write_manifest("irq_L0_asap", out, {}, "gcc")
+    assert len(m["git"]["changed"]) == 250
+    assert m["git"]["changed_sha256"] == {f"many/f{i:03}.txt": hashlib.sha256(f"{i}\n".encode()).hexdigest()
+                                          for i in range(250)}
+    line = BD._files(m["git"]["changed"])                # the display limit is only here
+    assert line.startswith("many/f000.txt, ") and line.endswith(" and 240 more")
