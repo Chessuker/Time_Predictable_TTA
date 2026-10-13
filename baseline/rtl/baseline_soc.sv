@@ -14,8 +14,8 @@ module baseline_soc #(
   /* verilator lint_off UNUSEDPARAM */
   parameter int CACHE_EN  = 1,          // synthesis only; the simulation netlist has it fixed
   /* verilator lint_on UNUSEDPARAM */
-  parameter int FIRST_LAT = 10,         // main memory: strobe -> ack, first word
-  parameter int BURST_LAT = 1           //              further words of a burst
+  parameter int FIRST_LAT = 10,         // main memory: strobe -> ack, first word of a transaction
+  parameter int BURST_LAT = 1           //              further words of a burst (cti, see xbus_mem)
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -36,10 +36,8 @@ module baseline_soc #(
   logic        we, stb, cyc, ack, err, irq_mti;
 
   /* verilator lint_off UNUSEDSIGNAL */
-  logic [2:0] cti_unused;
   logic [2:0] tag;                      // tag[2]: instruction fetch; only the bench looks at it
   /* verilator lint_on UNUSEDSIGNAL */
-  assign cti_unused = cti;              // bursts are recognised by cyc staying high
 
 `ifdef SYNTHESIS
   neorv32_baseline #(.CACHE_EN(CACHE_EN), .BOOT_MODE(0)) u_cpu (
@@ -79,11 +77,11 @@ module baseline_soc #(
   end
 
   xbus_mem #(.WORDS(16384), .FIRST_LAT(FIRST_LAT), .BURST_LAT(BURST_LAT), .SIM_PLUSARG("code")) u_code (
-    .clk, .rst, .adr(adr[15:2]), .dat_i(wdat), .we, .sel, .stb(stb_code), .cyc,
+    .clk, .rst, .adr(adr[15:2]), .dat_i(wdat), .we, .sel, .cti, .stb(stb_code), .cyc,
     .dat_o(dat_code), .ack(ack_code)
   );
   xbus_mem #(.WORDS(16384), .FIRST_LAT(FIRST_LAT), .BURST_LAT(BURST_LAT), .SIM_PLUSARG("")) u_data (
-    .clk, .rst, .adr(adr[15:2]), .dat_i(wdat), .we, .sel, .stb(stb_data), .cyc,
+    .clk, .rst, .adr(adr[15:2]), .dat_i(wdat), .we, .sel, .cti, .stb(stb_data), .cyc,
     .dat_o(dat_data), .ack(ack_data)
   );
   xbus_hil u_hil (

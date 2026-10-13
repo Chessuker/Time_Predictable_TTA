@@ -60,7 +60,7 @@
 // 0..THR and wraps, so the period is 2 x (THR + 1) cycles
 #define GPTMR_THR 6848u          // 13,698 cycles = 7300.3 Hz
 #ifndef BG_ITER
-#define BG_ITER 60               // handler body (MARK_IN..MARK_OUT) 502 cycles with the caches on, 1063 off
+#define BG_ITER 60               // handler body (MARK_IN..MARK_OUT) 502 cycles with the caches on, 2082 off
 #endif
 #endif
 
