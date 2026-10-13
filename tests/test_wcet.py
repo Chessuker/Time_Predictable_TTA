@@ -94,6 +94,40 @@ def test_loop_through_a_sync_point_needs_no_bound():
     assert (s.wcet, s.budget) == (1 + 1 + spec.P, 100 - spec.D)
 
 
+# Audit A3-2: t_sync cuts segments but is not a sync point (timing_model.md
+# sec. 3 and S6), so a loop that passes only t_sync still needs a bound.
+def test_loop_through_t_sync_alone_is_s6():
+    with pytest.raises(WcetError, match=r"loop through t_sync at 0 in main .*\(S6\)"):
+        wcet("loop: #0 -> tmr.t_sync\nnop\n#loop -> pc.t_jump")
+
+
+def test_loop_through_t_sync_with_branches_is_s6():
+    # every cycle passes the t_sync at 0, so no segment holds a loop; before the
+    # fix the per-segment S6 check accepted this
+    src = ("loop: #0 -> tmr.t_sync\nr1 -> pc.cond\n#skip -> pc.t_jz\nnop\n"
+           "skip: #loop -> pc.t_jump")
+    with pytest.raises(WcetError) as e:
+        wcet(src)
+    assert [a for a, _ in e.value.errors] == [0] and "(S6)" in str(e.value)
+
+
+@pytest.mark.parametrize("src", [
+    "#3 -> r1\n@loop_bound 3\nloop: #0 -> tmr.t_sync\nr1 -> pc.cond\n#loop -> pc.t_jnz\n#0 -> trap.t_halt",
+    "loop: #0 -> tmr.t_sync\n#10 -> tmr.t_wait\n#loop -> pc.t_jump",
+    "loop: #0 -> tmr.t_sync\n#10 -> tmr.t_advance\n#loop -> pc.t_jump",
+])
+def test_loop_through_t_sync_with_a_bound_or_a_sync_point_is_accepted(src):
+    wcet(src)
+
+
+def test_cli_fails_on_a_t_sync_loop(tmp_path, capsys):
+    from host.wcet.__main__ import main
+    path = tmp_path / "t.tta"
+    path.write_text("loop: #0 -> tmr.t_sync\nnop\n#loop -> pc.t_jump", encoding="utf-8")
+    assert main([str(path)]) == 1
+    assert "(S6)" in capsys.readouterr().err
+
+
 def test_irreducible_loop_is_refused():
     src = """
         r1      -> pc.cond

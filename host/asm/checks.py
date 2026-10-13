@@ -4,9 +4,10 @@ Run after a successful assembly:
   S1  no FU output is read before its latency, on any path
   S3  no path reaches t_advance while a deadline may be armed (B1)
   S4  t_arm and t_clear stay in the same function
-  S5  no recursion and no jump into another function
-S2, S7 and the indirect-jump part of S5 are checked per move in assembler.py.
-S6 belongs to the WCET tool.
+  S5  no recursion, no jump into another function, and every return
+      (pc.link -> pc.t_jump) jumps to the function's own return address
+S2, S7 and the per-move part of S5 (which src may feed a jump) are checked in
+assembler.py. S6 belongs to the WCET tool.
 """
 from host.common import cfg, spec
 
@@ -36,6 +37,7 @@ def run_checks(prog):
                     err(n.addr, f"jump from {f.name} into {owner.get(e.to, 'nowhere')} (S5)")
 
     _check_recursion(funcs, err)
+    _check_returns(funcs, err)
     for f in funcs.values():
         _check_latency(f, err)
     advances = _may_advance(funcs)
@@ -63,6 +65,134 @@ def _check_recursion(funcs, err):
     for name in sorted(funcs):
         if name not in state:
             visit(name, [name])
+
+
+# ---------------------------------------------------------------- S5 return address
+# pc.link is writable (isa.md §6) so that a function can save it around a call
+# and restore it, but then 'pc.link -> pc.t_jump' jumps wherever pc.link points:
+# '#x -> pc.link' or 'trap.epc -> pc.link' would make it an indirect jump that
+# the CFG treats as a return. This must-analysis tracks which places surely
+# hold the function's own return address (RA) and rejects a return where
+# pc.link may hold anything else. Places: r0-r15, pc.link, mem.data_in,
+# mem.data_out, and data words stored or loaded at an immediate address.
+REGS = tuple(f"r{i}" for i in range(16))
+COPY_PLACES = REGS + ("pc.link", "mem.data_in")
+
+
+def _clobbers(funcs):
+    """Per function, what a call to it may overwrite in the caller's view:
+    (places, data addresses, any data address), callees included."""
+    own = {}
+    for name, f in funcs.items():
+        places, addrs, any_addr = set(), set(), False
+        for n in f.nodes.values():
+            if n.dst in COPY_PLACES:
+                places.add(n.dst)
+            elif n.dst == "mem.t_load":
+                places.add("mem.data_out")
+            elif n.dst == "mem.t_store":
+                if n.imm is None:
+                    any_addr = True
+                else:
+                    addrs.add(n.imm)
+        own[name] = (places, addrs, any_addr)
+    result = {}
+
+    def visit(name):
+        if name not in result:
+            result[name] = own[name]          # recursion is reported by S5 already
+            places, addrs, any_addr = set(own[name][0]), set(own[name][1]), own[name][2]
+            for c in funcs[name].calls:
+                cp, ca, cany = visit(c)
+                places |= cp
+                addrs |= ca
+                any_addr |= cany
+            result[name] = (places, addrs, any_addr)
+        return result[name]
+
+    for name in funcs:
+        visit(name)
+    return result
+
+
+def _handler_starts(funcs):
+    """Addresses written to trap.handler, or None if one comes from a register
+    (then any function may be entered by a trap)."""
+    starts = set()
+    for f in funcs.values():
+        for n in f.nodes.values():
+            if n.dst == "trap.handler":
+                if n.imm is None:
+                    return None
+                starts.add(n.imm)
+    return starts
+
+
+def _check_returns(funcs, err):
+    clobbers = _clobbers(funcs)
+    handlers = _handler_starts(funcs)
+    by_start = {f.start: f.name for f in funcs.values()}
+    for f in funcs.values():
+        if not any(n.is_return for n in f.nodes.values()):
+            continue
+        # A trap does not set pc.link, so in a handler it holds whatever the
+        # interrupted code left there: no return address (isa.md §9, S7).
+        trap_entry = handlers is None or f.start in handlers
+        _returns_in(f, frozenset() if trap_entry else frozenset({"pc.link"}),
+                    trap_entry, clobbers, by_start, err)
+
+
+def _ra_after(n, ra, clobbers, by_start):
+    """The places that surely hold RA after move n, given those before it."""
+    ra = set(ra)
+    src_ra = n.src is not None and n.src in ra
+    if n.dst in COPY_PLACES:
+        (ra.add if src_ra else ra.discard)(n.dst)
+    elif n.dst == "mem.t_load":
+        cell = None if n.imm is None else f"mem[{n.imm}]"
+        (ra.add if cell in ra else ra.discard)("mem.data_out")
+    elif n.dst == "mem.t_store":
+        if n.imm is not None:
+            cell = f"mem[{n.imm}]"
+            (ra.add if "mem.data_in" in ra else ra.discard)(cell)
+        elif "mem.data_in" not in ra:          # unknown address: any word may change
+            ra = {p for p in ra if not p.startswith("mem[")}
+    elif n.dst == "pc.t_call":
+        callee = by_start.get(n.call)
+        if callee is None:
+            ra = set()
+        else:
+            places, addrs, any_addr = clobbers[callee]
+            ra -= places
+            ra -= {f"mem[{a}]" for a in addrs}
+            if any_addr:
+                ra = {p for p in ra if not p.startswith("mem[")}
+        ra.discard("pc.link")                   # now the call's own return point
+    return frozenset(ra)
+
+
+def _returns_in(f, entry, trap_entry, clobbers, by_start, err):
+    inn = {f.start: entry}
+    work = [f.start]
+    while work:
+        a = work.pop()
+        n = f.nodes[a]
+        out = _ra_after(n, inn[a], clobbers, by_start)
+        for e in n.succ:
+            if e.to not in f.nodes:
+                continue
+            old = inn.get(e.to)
+            new = out if old is None else old & out
+            if new != old:
+                inn[e.to] = new
+                work.append(e.to)
+    for a in sorted(inn):
+        n = f.nodes[a]
+        if n.is_return and "pc.link" not in inn[a]:
+            why = ("it is entered by a trap, which sets no return address" if trap_entry else
+                   "pc.link may hold something other than its return address here")
+            err(a, f"return in {f.name}, but {why}; pc.link may only be restored "
+                   "from a copy of itself (S5)")
 
 
 # ---------------------------------------------------------------- S1 latency

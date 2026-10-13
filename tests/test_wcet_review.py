@@ -328,3 +328,116 @@ def test_cli_states_the_guarantee(capsys):
     out = capsys.readouterr().out
     assert "valid if: loop at line" in out and "<= 20" in out
     assert "SAFE UPPER BOUND" in out and "TIGHT" in out and "feasib" in out
+
+
+# ---------------------------------------------------------------- a halt or trap inside a callee
+# Audit A3-1: the cost of a call used only the callee's entry -> return paths,
+# so a halt reached inside the callee was dropped and the program WCET could be
+# far below a real run. The call now also ends the caller's segment.
+HALT_IN_CALLEE = """
+        #{c}        -> r1
+        #f          -> pc.t_call
+        #0          -> trap.t_halt
+.func f
+        r1          -> pc.cond
+        #slow       -> pc.t_jnz
+        pc.link     -> pc.t_jump
+slow:   #100        -> r2
+        #ADD        -> alu.op
+@loop_bound 100
+loop:   r2          -> alu.a
+        #-1         -> alu.t_b
+        alu.out     -> r2
+        r2          -> pc.cond
+        #loop       -> pc.t_jnz
+        #0          -> trap.t_halt
+.endfunc
+"""
+
+
+def test_a_halt_inside_a_callee_bounds_the_program():
+    src = HALT_IN_CALLEE.format(c=1)
+    rep = wcet(src)
+    f_halt = 1 + (1 + P) + 2 + 100 * 5 + 99 * P + 1          # cond, jnz taken, 2 moves, loop, halt
+    assert seg(rep, "f", "entry", "halt").wcet == f_halt
+    in_main = [s for s in rep.functions["main"].segments if s.end_kind == "halt" and s.via is None]
+    via_f = [s for s in rep.functions["main"].segments if s.via == "f"]
+    assert [s.wcet for s in in_main] == [1 + (1 + P) + 3 + P + 1]      # f returns, main halts
+    assert len(via_f) == 1 and via_f[0].end == 1 and via_f[0].end_kind == "halt"
+    assert via_f[0].wcet == 1 + (1 + P) + f_halt                       # set r1, call, f to its halt
+    assert via_f[0].loop_bounds == {next(iter(rep.functions["f"].to_end["halt"][1])): 100}
+    assert rep.program_wcet() == via_f[0].wcet                         # not the 9 of the audit
+    halt_both(src, R + via_f[0].wcet - 1)                              # the ISS takes this path
+
+
+def test_the_shorter_input_stays_within_the_bound():
+    rep = wcet(HALT_IN_CALLEE.format(c=0))
+    r = run(HALT_IN_CALLEE.format(c=0))
+    assert r.end == "halt" and r.cycle < rep.halt_cycle()
+
+
+def test_a_callee_that_only_halts():
+    src = "#g -> pc.t_call\n#0 -> trap.t_halt\n.func g\nnop\n#0 -> trap.t_halt\n.endfunc"
+    rep = wcet(src)                                   # was "never returns; not supported"
+    assert rep.functions["g"].to_return is None
+    assert [s.via for s in rep.functions["main"].segments] == ["g"]
+    halt_both(src, R + (1 + P) + 2 - 1)
+
+
+def test_a_halt_two_calls_deep():
+    src = """
+        #1          -> r1
+        #a          -> pc.t_call
+        #0          -> trap.t_halt
+.func a
+        pc.link     -> r9
+        #b          -> pc.t_call
+        r9          -> pc.link
+        pc.link     -> pc.t_jump
+.endfunc
+.func b
+        r1          -> pc.cond
+        #out        -> pc.t_jz
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+        #0          -> trap.t_halt
+out:    pc.link     -> pc.t_jump
+.endfunc
+"""
+    rep = wcet(src)
+    b_halt = 2 + 8 + 1                                # cond, jz not taken, 8 nops, halt
+    assert rep.functions["b"].to_end["halt"][0] == b_halt
+    assert rep.functions["a"].to_end["halt"][0] == 1 + (1 + P) + b_halt
+    (s,) = [s for s in rep.functions["main"].segments if s.via == "a"]
+    assert s.wcet == 1 + (1 + P) + 1 + (1 + P) + b_halt
+    r = run(src)                                      # r1 = 1: b halts, exactly this path
+    assert r.end == "halt" and r.cycle == R + s.wcet - 1 <= rep.halt_cycle()
+
+
+def test_a_trap_inside_a_callee_ends_the_segment_too():
+    src = "#f -> pc.t_call\n#0 -> trap.t_halt\n.func f\nnop\n.illegal 0x0F80_0000\n.endfunc"
+    rep = wcet(src)
+    (s,) = [s for s in rep.functions["main"].segments if s.via == "f"]
+    assert (s.end_kind, s.wcet) == ("trap", (1 + P) + 2)
+    assert rep.program_wcet() is None                 # no halt path: the trap is not an end of the program
+
+
+def test_cli_names_the_callee_of_a_halt(capsys, tmp_path):
+    from host.wcet.__main__ import main
+    path = tmp_path / "t.tta"
+    path.write_text(HALT_IN_CALLEE.format(c=1), encoding="utf-8")
+    assert main([str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "halt in f, called" in out and f"program: {wcet(HALT_IN_CALLEE.format(c=1)).program_wcet()}" in out
+
+
+def test_a_call_to_a_function_with_a_sync_point_is_still_refused():
+    src = "#f -> pc.t_call\n#0 -> trap.t_halt\n.func f\n#100 -> tmr.t_wait\npc.link -> pc.t_jump\n.endfunc"
+    with pytest.raises(WcetError, match="call at 0 to f, which contains a sync point; not supported"):
+        wcet(src)

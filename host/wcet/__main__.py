@@ -58,8 +58,9 @@ def main(argv=None):
         for s in f.segments:
             budget = "" if s.budget is None else f"  budget {s.budget}  {'OK' if s.ok else 'OVER'}"
             failed |= not s.ok
+            end = s.end_kind if s.via is None else f"{s.end_kind} in {s.via}, called"
             print(f"  {s.start_kind:9} {s.start:4} (line {line_of.get(s.start, '?')}) -> "
-                  f"{s.end_kind:9} {s.end:4} (line {line_of.get(s.end, '?')}):  W = {s.wcet}{budget}")
+                  f"{end:9} {s.end:4} (line {line_of.get(s.end, '?')}):  W = {s.wcet}{budget}")
             print(f"            valid if: {fmt_bounds(s.loop_bounds, line_of)}")
             print(f"            witness:  {fmt_witness(s.witness)}")
     if rep.program_wcet() is not None:
