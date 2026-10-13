@@ -454,6 +454,10 @@ def _solve(f, g, start, start_kind, end, bounds, errors,
     if res.status != 0 or res.x is None or res.fun is None:
         raise WcetError([(start, f"internal: ILP solver did not report success for {where} "
                                  f"(status {res.status}: {res.message})")])
+    # every comparison with NaN is False, so a NaN would slip past the checks below
+    if not np.isfinite(res.fun) or not np.all(np.isfinite(res.x)):
+        raise WcetError([(start, f"internal: ILP solver reported success for {where} with a "
+                                 f"non-finite objective or solution (objective {res.fun})")])
     x = np.rint(res.x).astype(int)
     if np.abs(res.x - x).max() > 1e-6 or x.min() < 0 or x[src] != 1 or x[snk] != 1:
         raise WcetError([(start, f"internal: ILP solution for {where} is not one path "

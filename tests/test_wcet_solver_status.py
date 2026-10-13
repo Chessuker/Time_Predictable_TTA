@@ -105,6 +105,20 @@ def test_success_without_a_proof_of_optimality_is_an_error(monkeypatch, dual):
         analyse(assemble(SRC, "t.tta"))
 
 
+@pytest.mark.parametrize("override", [
+    {"fun": np.nan},                                   # review: NaN fails every comparison
+    {"fun": np.inf},
+    {"fun": -np.inf},
+    {"x": lambda r: np.where(np.arange(len(r.x)) == 0, np.nan, r.x)},
+    {"x": lambda r: np.where(np.arange(len(r.x)) == 0, np.inf, r.x)},
+])
+def test_success_with_a_non_finite_objective_or_solution_is_an_error(monkeypatch, override):
+    # status 0, and the rest of the result (counts, dual bound) is the real, valid one
+    monkeypatch.setattr(A, "milp", solved(**override))
+    with pytest.raises(WcetError, match="non-finite objective or solution"):
+        analyse(assemble(SRC, "t.tta"))
+
+
 def test_a_gap_below_one_cycle_is_still_a_proof(monkeypatch):
     # every W is an integer, so a bound below W + 1 leaves no better solution
     monkeypatch.setattr(A, "milp", solved(mip_dual_bound=lambda r: r.fun - 0.5))
