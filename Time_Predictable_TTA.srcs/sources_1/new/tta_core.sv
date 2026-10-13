@@ -113,15 +113,22 @@ module tta_core import tta_pkg::*; #(
   );
 
   // ---------------------------------------------------------------- D: decode
+  // A word fetched from outside code memory (fall-through past the last word,
+  // or a trap into a handler address >= IMEM_W) reads as 0, which is always
+  // illegal (isa.md sec. 2, 8). The SRAM sees only fetch_pc[IAW-1:0], so
+  // without this the PC would wrap to the bottom of memory.
+  logic [31:0] d_word;
+  assign d_word = ir_pc >= 32'(IMEM_W) ? '0 : ir;
+
   logic [7:0]  d_dst, d_src;
   logic        d_imm, d_illegal;
   logic [31:0] d_immval;
-  assign d_dst    = ir[31:24];
-  assign d_imm    = ir[23];
-  assign d_src    = ir[7:0];
-  assign d_immval = {{9{ir[22]}}, ir[22:0]};
+  assign d_dst    = d_word[31:24];
+  assign d_imm    = d_word[23];
+  assign d_src    = d_word[7:0];
+  assign d_immval = {{9{d_word[22]}}, d_word[22:0]};
   assign d_illegal = !port_writable(d_dst)
-                   || (!d_imm && (ir[22:8] != '0 || !port_readable(d_src)));
+                   || (!d_imm && (d_word[22:8] != '0 || !port_readable(d_src)));
 
   logic [S_N-1:0] d_sel;
   always_comb begin
@@ -273,7 +280,7 @@ module tta_core import tta_pkg::*; #(
         ir_pc     <= fetch_pc;
         x_valid   <= ir_valid;
         x_pc      <= ir_pc;
-        x_word    <= ir;
+        x_word    <= d_word;
         x_dst     <= d_dst;
         x_src     <= d_src;
         x_imm     <= d_imm;

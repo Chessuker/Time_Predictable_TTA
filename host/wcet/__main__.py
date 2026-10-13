@@ -13,6 +13,9 @@ What the numbers mean
   which each loop listed in 'valid if' runs its header at most N times per
   entry into the loop. The analysis also assumes no trap is taken inside the
   segment and that every move is legal (the static checks S1-S7 passed).
+  DEADLINES ARE NOT CHECKED. A segment marked 'deadline: NOT checked' may run
+  while a t_arm deadline is armed; W within its budget does not show that the
+  deadline is met, and the program can still take a deadline trap.
   W is TIGHT (some input takes exactly W cycles) when the witness path is
   feasible. The tool does not check path feasibility: correlated branches can
   make the witness infeasible and W pessimistic, never too small. Run the
@@ -63,12 +66,18 @@ def main(argv=None):
                   f"{end:9} {s.end:4} (line {line_of.get(s.end, '?')}):  W = {s.wcet}{budget}")
             print(f"            valid if: {fmt_bounds(s.loop_bounds, line_of)}")
             print(f"            witness:  {fmt_witness(s.witness)}")
+            if s.deadline_unchecked:
+                print("            deadline: may run while a t_arm deadline is armed; NOT checked")
     if rep.program_wcet() is not None:
         print(f"program: {rep.program_wcet()} cycles, halt at cycle {rep.halt_cycle()}")
     print()
     print(GUARANTEE)
     for addr, msg in rep.warnings:
         print(f"{args.source.name}:{line_of.get(addr, '?')}: warning: {msg}", file=sys.stderr)
+    unchecked = rep.unchecked_deadlines()
+    if unchecked:
+        print(f"{args.source.name}: warning: {len(unchecked)} segment(s) may run while a deadline is "
+              "armed; the tool does not check deadlines (docs/wcet_method.md sec. 5)", file=sys.stderr)
     return 2 if failed else 0
 
 
