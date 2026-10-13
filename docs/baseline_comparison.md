@@ -238,7 +238,9 @@ for the text of the warnings.
 Provenance (audit A5-3): `py -m host.baseline.board build` writes, next to
 each executable, `manifest.json` with what it was built from (git commit,
 tracked and untracked changes, sha256 of every file under `baseline/sw`, the
-NEORV32 submodule commit, the GCC version) bound to the executable's sha256.
+NEORV32 submodule commit, sha256 of every changed or untracked file in the
+repository and in the submodule, the GCC version) bound to the executable's
+sha256.
 `run` refuses an executable its manifest does not describe and records the
 manifest, the sources changed since the build, the git state at run time and
 the sha256 of the bitstream file on disk in `summary.json`;

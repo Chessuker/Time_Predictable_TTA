@@ -289,15 +289,32 @@ def source_hashes():
             for f in sorted(SW_SOURCES.rglob("*")) if f.is_file()}
 
 
+def changed_hashes(repo, state):
+    """sha256 of every changed or untracked file of a git_state(), by path
+    relative to repo; None for a file that is deleted. A commit identifies the
+    committed content only; this pins what was on disk besides it."""
+    out = {}
+    for line in state["changed"]:
+        path = line[3:].split(" -> ")[-1].strip('"')            # a rename names old -> new
+        f = Path(repo) / path
+        out[path] = sha256(f.read_bytes()) if f.is_file() else None
+    return out
+
+
 def write_manifest(name, out, defines, toolchain):
     """What one executable was built from, written next to it at build time and
     bound to its sha256 (audit A5-3): a run made later records this, not the
-    tree as it is when the board runs."""
+    tree as it is when the board runs. Besides the commits, the content of
+    every changed or untracked file is hashed, in the repository and in the
+    NEORV32 submodule (whose crt0, linker script and libraries go into every
+    executable), so a local edit there is identified too."""
     exe = (out / "neorv32_exe.bin").read_bytes()
     sub = ROOT / "baseline" / "neorv32"
+    repo, nrv = git_state(), git_state(sub)
     m = {"name": name, "defines": defines, "exe": {"bytes": len(exe), "sha256": sha256(exe)},
-         "built": time.strftime("%Y-%m-%d %H:%M:%S"), "git": git_state(), "sources": source_hashes(),
-         "neorv32": git_state(sub), "toolchain": toolchain}
+         "built": time.strftime("%Y-%m-%d %H:%M:%S"),
+         "git": {**repo, "changed_sha256": changed_hashes(ROOT, repo)}, "sources": source_hashes(),
+         "neorv32": {**nrv, "changed_sha256": changed_hashes(sub, nrv)}, "toolchain": toolchain}
     (out / MANIFEST).write_text(json.dumps(m, indent=1))
     return m
 
@@ -360,8 +377,10 @@ def provenance_line(prov):
     exe, b, bit = prov["exe"], prov.get("build"), prov["bitstream_file"]
     if b is not None:
         g = b["git"]
+        n = b.get("neorv32") or {}
         src = (f"built {b['built']} from commit {g['commit'][:10]}"
-               f"{' + changes: ' + _files(g['changed']) if g['dirty'] else ''}")
+               f"{' + changes: ' + _files(g['changed']) if g['dirty'] else ''}"
+               f"{', NEORV32 changes: ' + _files(n['changed']) if n.get('dirty') else ''}")
         if prov.get("sources_changed_since_build"):
             src += f" (sources changed since the build: {', '.join(prov['sources_changed_since_build'])})"
     else:                                               # run-time state only (first A5-3 version)

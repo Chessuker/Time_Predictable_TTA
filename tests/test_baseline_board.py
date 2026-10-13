@@ -305,10 +305,45 @@ def test_the_build_manifest_is_bound_to_the_executable(tree):
     m = BD.write_manifest("irq_L0_asap", out, {"TRIG": 0}, "riscv-none-elf-gcc 15.2.0")
     exe = (out / "neorv32_exe.bin").read_bytes()
     assert m["exe"] == {"bytes": 256, "sha256": hashlib.sha256(exe).hexdigest()}
-    assert m["git"] == GIT_BUILD and m["neorv32"]["commit"] == "e" * 40 and m["toolchain"].startswith("riscv")
+    assert m["git"] == {**GIT_BUILD, "changed_sha256": {
+        "Time_Predictable_TTA.xpr": None,                                   # not in this tree: as deleted
+        "baseline/sw/ctrl/extra.h": hashlib.sha256(b"#define X 1\n").hexdigest()}}
+    assert m["neorv32"] == {"commit": "e" * 40, "dirty": False, "changed": [], "changed_sha256": {}}
+    assert m["toolchain"].startswith("riscv")
     assert m["sources"] == {"baseline/sw/ctrl/extra.h": hashlib.sha256(b"#define X 1\n").hexdigest(),
                             "baseline/sw/ctrl/main.c": hashlib.sha256(b"int main(void) { return 0; }\n").hexdigest()}
     assert __import__("json").loads((out / "manifest.json").read_text()) == m
+
+
+def test_local_changes_inside_the_neorv32_submodule_are_hashed(tree, monkeypatch):
+    # the submodule commit names the committed sources only; crt0, the linker
+    # script and the libraries go into every executable, so a local edit or a
+    # new file there must be identified by its content
+    import hashlib
+    root, out = tree
+    nrv = root / "baseline" / "neorv32"
+    (nrv / "sw" / "common").mkdir(parents=True)
+    (nrv / "sw" / "lib").mkdir(parents=True)
+    (nrv / "sw" / "common" / "crt0.S").write_bytes(b"_start: j main\n")
+    (nrv / "sw" / "lib" / "extra.c").write_bytes(b"int extra;\n")
+    sub_state = {"commit": "e" * 40, "dirty": True,
+                 "changed": [" M sw/common/crt0.S", "?? sw/lib/extra.c", " D sw/common/gone.c"]}
+    monkeypatch.setattr(BD, "git_state", lambda repo=None: GIT_BUILD if repo is None else sub_state)
+    m = BD.write_manifest("irq_L0_asap", out, {}, "gcc")
+    assert m["neorv32"]["changed_sha256"] == {
+        "sw/common/crt0.S": hashlib.sha256(b"_start: j main\n").hexdigest(),
+        "sw/lib/extra.c": hashlib.sha256(b"int extra;\n").hexdigest(),
+        "sw/common/gone.c": None}
+    (nrv / "sw" / "common" / "crt0.S").write_bytes(b"_start: j other\n")                 # edited after the build
+    assert BD.load_manifest("irq_L0_asap", (out / "neorv32_exe.bin").read_bytes()) == m
+    line = BD.provenance_line(BD.provenance(1, (out / "neorv32_exe.bin").read_bytes(), m))
+    assert "NEORV32 changes: sw/common/crt0.S, sw/lib/extra.c, sw/common/gone.c" in line
+
+
+def test_a_renamed_file_is_hashed_under_its_new_name(tmp_path):
+    (tmp_path / "new.c").write_bytes(b"x")
+    state = {"changed": ["R  old.c -> new.c"]}
+    assert BD.changed_hashes(tmp_path, state) == {"new.c": __import__("hashlib").sha256(b"x").hexdigest()}
 
 
 def test_a_source_changed_after_the_build_does_not_change_the_recorded_build(tree, monkeypatch):
