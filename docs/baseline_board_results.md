@@ -24,7 +24,10 @@ recorded on 2026-10-11 with
     py -m host.baseline.board run <port> --cache 0
 
 and tabulated by `py -m host.baseline.board report` from the records in
-`build/baseline_board/` (not in git), copied here unchanged. Definitions:
+`build/baseline_board/` (not in git), copied here unchanged. These runs carry
+no record of the uploaded program or the bitstream (their `summary.json` has
+only `git describe`, `9837fde-dirty`); runs made from now on record both,
+with a build manifest written when each program is built (audit A5-3). Definitions:
 `docs/baseline_measurement.md` sections 1 and 2. Every period is timestamped
 by the xbus_hil monitor in hardware. Integrity OK means the record sequence
 check and the model replay passed; it says nothing about timing. Deadline

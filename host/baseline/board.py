@@ -16,7 +16,13 @@ One run (nothing to press on the board):
   4. the program switches the UART TX to the monitor (3 Mbaud) and releases
      the first period START_DELAY = 1 s later; the port switches baud meanwhile
   5. read NRV1 records until --periods are in: from k = 0, strictly in order
-Saved in build/baseline_board/c<cache>/<name>/: records.csv, summary.json
+build writes, next to each executable, manifest.json: what it was built from
+(git commit, tracked and untracked changes, sha256 of every file under
+baseline/sw, the NEORV32 submodule commit, the GCC version), bound to the
+executable's sha256. run refuses an executable its manifest does not describe.
+Saved in build/baseline_board/c<cache>/<name>/: records.csv, summary.json (with the
+provenance of the run: that manifest, the sources changed since the build, the
+git state at run time, sha256 of the bitstream file on disk)
 (host/baseline/analysis.py: statistics, record checks, model replay).
 
 A run's verdict is about the integrity of the measurement only: "integrity OK"
@@ -31,6 +37,7 @@ handler) x actuation (asap, wait = release + 1001).
 """
 import argparse
 import csv
+import hashlib
 import json
 import re
 import shlex
@@ -47,6 +54,9 @@ from host.baseline import analysis as A, bustrace as bt          # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 EXE_DIR = ROOT / "build" / "baseline_exe"
+SW_SOURCES = ROOT / "baseline" / "sw"
+MANIFEST = "manifest.json"
+GCC = "$HOME/xpack/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none-elf-gcc"   # baseline.mk RISCV_PREFIX
 OUT_DIR = ROOT / "build" / "baseline_board"
 CTRL = ROOT / "baseline" / "sw" / "ctrl"
 
@@ -83,6 +93,8 @@ def build(names=None):
     from host.lockstep.runner import wsl, wsl_path
     q = lambda p: shlex.quote(wsl_path(p))                       # noqa: E731
     allc = configs(1)
+    code, text = wsl(f"{GCC} --version | head -1")
+    toolchain = text.strip() if code == 0 else "?"
     for name in names or allc:
         out = EXE_DIR / name
         out.mkdir(parents=True, exist_ok=True)
@@ -91,7 +103,9 @@ def build(names=None):
                          f"APP_FLT={q(out / 'elf.bin')} APP_EXE={q(out / 'neorv32_exe.bin')} clean exe")
         if code != 0 or not (out / "neorv32_exe.bin").exists():
             raise BoardError(f"build {name} failed:\n{text[-3000:]}")
-        print(f"built {name}: {(out / 'neorv32_exe.bin').stat().st_size} bytes")
+        m = write_manifest(name, out, allc[name], toolchain)
+        print(f"built {name}: {m['exe']['bytes']} bytes, sha256 {m['exe']['sha256'][:16]}"
+              f"{', from uncommitted changes' if m['git']['dirty'] else ''}")
 
 
 # ---------------------------------------------------------------- bootloader
@@ -216,7 +230,7 @@ def describe_raw(raw):
 
 
 # ---------------------------------------------------------------- one run
-def save(path, name, cache, recs):
+def save(path, name, cache, recs, exe=None, manifest=None):
     path.mkdir(parents=True, exist_ok=True)
     with (path / "records.csv").open("w", newline="") as f:
         w = csv.writer(f)
@@ -224,7 +238,7 @@ def save(path, name, cache, recs):
         for r in recs:
             w.writerow([r.k, r.rel, r.start, r.sense, r.act, r.enc, r.u, r.flags, r.bg_n, r.bg_cycles])
     summary = {"name": name, "cache": cache, "config": configs(cache)[name], "git": git_describe(),
-               **evaluate(recs)}
+               "provenance": provenance(cache, exe, manifest), **evaluate(recs)}
     (path / "summary.json").write_text(json.dumps(summary, indent=1))
     return summary
 
@@ -260,6 +274,128 @@ def verdict(s):
             f"{s['n_replay_mismatches']}); {miss}")
 
 
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def bitstream_path(cache):
+    """The bitstream nrv_build writes (fpga/vivado/nrv.tcl, nrv_bit)."""
+    return ROOT / "build" / f"vivado_nrv_c{cache}" / f"nrv_c{cache}.runs" / "impl_1" / "arty_neorv32_top.bit"
+
+
+def source_hashes():
+    """sha256 of every file under baseline/sw as it is on disk now, tracked or not."""
+    return {f.relative_to(ROOT).as_posix(): sha256(f.read_bytes())
+            for f in sorted(SW_SOURCES.rglob("*")) if f.is_file()}
+
+
+def changed_hashes(repo, state):
+    """sha256 of every changed or untracked file of a git_state(), by path
+    relative to repo; None for a file that is deleted. A commit identifies the
+    committed content only; this pins what was on disk besides it."""
+    out = {}
+    for line in state["changed"]:
+        path = line[3:].split(" -> ")[-1].strip('"')            # a rename names old -> new
+        f = Path(repo) / path
+        out[path] = sha256(f.read_bytes()) if f.is_file() else None
+    return out
+
+
+def write_manifest(name, out, defines, toolchain):
+    """What one executable was built from, written next to it at build time and
+    bound to its sha256 (audit A5-3): a run made later records this, not the
+    tree as it is when the board runs. Besides the commits, the content of
+    every changed or untracked file is hashed, in the repository and in the
+    NEORV32 submodule (whose crt0, linker script and libraries go into every
+    executable), so a local edit there is identified too."""
+    exe = (out / "neorv32_exe.bin").read_bytes()
+    sub = ROOT / "baseline" / "neorv32"
+    repo, nrv = git_state(), git_state(sub)
+    m = {"name": name, "defines": defines, "exe": {"bytes": len(exe), "sha256": sha256(exe)},
+         "built": time.strftime("%Y-%m-%d %H:%M:%S"),
+         "git": {**repo, "changed_sha256": changed_hashes(ROOT, repo)}, "sources": source_hashes(),
+         "neorv32": {**nrv, "changed_sha256": changed_hashes(sub, nrv)}, "toolchain": toolchain}
+    (out / MANIFEST).write_text(json.dumps(m, indent=1))
+    return m
+
+
+def load_manifest(name, exe):
+    path = EXE_DIR / name / MANIFEST
+    if not path.exists():
+        raise BoardError(f"{name}: no build manifest; run 'py -m host.baseline.board build' again")
+    m = json.loads(path.read_text())
+    if m["exe"]["sha256"] != sha256(exe):
+        raise BoardError(f"{name}: neorv32_exe.bin is not the executable its manifest describes "
+                         "(changed after 'build'); run build again")
+    return m
+
+
+def provenance(cache, exe, manifest=None):
+    """What a run used, so its records can be tied to one program and one source
+    tree (audit A5-3): the uploaded executable, the manifest written when it was
+    built, the files under baseline/sw changed since that build, the git state
+    at run time, and the bitstream file on disk. The FPGA is programmed by hand,
+    so the bitstream entry names the file that was there, not what is on the
+    board (check_bitstream() only checks its cache setting)."""
+    bit = bitstream_path(cache)
+    changed = None
+    if manifest is not None:
+        now, then = source_hashes(), manifest["sources"]
+        changed = sorted(f for f in now.keys() | then.keys() if now.get(f) != then.get(f))
+    return {
+        "exe": None if exe is None else {"bytes": len(exe), "sha256": sha256(exe)},
+        "build": manifest,
+        "sources_changed_since_build": changed,
+        "run": {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "git": git_state()},
+        "bitstream_file": None if not bit.exists() else {
+            "path": bit.relative_to(ROOT).as_posix(), "sha256": sha256(bit.read_bytes()),
+            "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(bit.stat().st_mtime))},
+    }
+
+
+def git_state(repo=None):
+    """Commit and every changed or untracked file (git status --porcelain lines,
+    'XY path'), ignored files left out."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo or ROOT), *args], capture_output=True, text=True,
+                              timeout=10).stdout
+    try:
+        commit = git("rev-parse", "HEAD").strip()
+        changed = git("status", "--porcelain", "--untracked-files=all").splitlines()   # keep the leading space
+    except OSError:
+        return {"commit": "?", "dirty": None, "changed": []}
+    return {"commit": commit, "dirty": bool(changed), "changed": changed}   # complete: the manifest hashes each
+
+
+SHOW_FILES = 10                  # console and report lines only; the manifest keeps every file
+
+
+def _files(lines):
+    names = [c[3:] for c in lines]
+    more = len(names) - SHOW_FILES
+    return ", ".join(names[:SHOW_FILES]) + (f" and {more} more" if more > 0 else "")
+
+
+def provenance_line(prov):
+    if not prov:
+        return "provenance not recorded (run made before audit A5-3)"
+    exe, b, bit = prov["exe"], prov.get("build"), prov["bitstream_file"]
+    if b is not None:
+        g = b["git"]
+        n = b.get("neorv32") or {}
+        src = (f"built {b['built']} from commit {g['commit'][:10]}"
+               f"{' + changes: ' + _files(g['changed']) if g['dirty'] else ''}"
+               f"{', NEORV32 changes: ' + _files(n['changed']) if n.get('dirty') else ''}")
+        if prov.get("sources_changed_since_build"):
+            src += f" (sources changed since the build: {', '.join(prov['sources_changed_since_build'])})"
+    else:                                               # run-time state only (first A5-3 version)
+        g = prov.get("git") or {"commit": "?", "dirty": False, "changed": []}
+        src = (f"no build manifest; at run time commit {g['commit'][:10]}"
+               f"{' + changes: ' + _files(g['changed']) if g['dirty'] else ''}")
+    return (f"program sha256 {exe['sha256'][:16] if exe else '?'}, {src}, "
+            f"bitstream file {bit['sha256'][:16] + ' (' + bit['modified'] + ')' if bit else 'not found'}")
+
+
 def git_describe():
     try:
         return subprocess.run(["git", "-C", str(ROOT), "describe", "--always", "--dirty"],
@@ -270,6 +406,7 @@ def git_describe():
 
 def run_one(ser, name, cache, n):
     exe = (EXE_DIR / name / "neorv32_exe.bin").read_bytes()
+    manifest = load_manifest(name, exe)                  # before touching the board
     ser.baudrate = BOOT_BAUD
     link = Link(ser)
     reset_to_bootloader(link)
@@ -286,7 +423,7 @@ def run_one(ser, name, cache, n):
         path.mkdir(parents=True, exist_ok=True)
         (path / "raw_failed.bin").write_bytes(raw)
         raise BoardError(f"{e}\n  monitor stream: {describe_raw(raw)}\n  saved in {path / 'raw_failed.bin'}") from None
-    return save(path, name, cache, recs)
+    return save(path, name, cache, recs, exe, manifest)
 
 
 def run(port, cache, names, n):
@@ -296,6 +433,7 @@ def run(port, cache, names, n):
         for name in names:
             s = run_one(ser, name, cache, n)
             print(f"--- c{cache} {name}: {verdict(s)}")
+            print(f"    {provenance_line(s['provenance'])}")
             print(A.format_summary(s["all"], "all periods (primary), "))
             print(A.format_summary(s["steady"], "steady state k >= 1, "))
 
@@ -304,10 +442,12 @@ def report(out=sys.stdout):
     """Tables of every saved run, recomputed from its records.csv: all periods
     (primary) and steady state (k >= 1). misses = deadline misses / periods;
     integrity = sequence check and model replay (not a timing verdict)."""
-    runs = []
+    runs, provs = [], []
     for p in sorted(OUT_DIR.glob("c*/*/records.csv")):
         recs = load_records(p)
         runs.append((p.parent.parent.name, p.parent.name, evaluate(recs)))
+        js = p.parent / "summary.json"
+        provs.append(json.loads(js.read_text()).get("provenance") if js.exists() else None)
 
     def f(x):
         return f"{x['min']}/{x['p50']}/{x['p99']}/{x['max']}" if x else "-"
@@ -327,6 +467,9 @@ def report(out=sys.stdout):
             print(f"| {cache} | {name} | {integ} | {miss} | {f(d['release_start'])} | {f(d['release_sense'])} | "
                   f"{f(d['sense_act'])} | {f(d['release_act'])} | {f(d['sense_interval'])} | "
                   f"{f(d['release_interval'])} |", file=out)
+    print("\nProvenance (summary.json):", file=out)
+    for (cache, name, _), prov in zip(runs, provs):
+        print(f"- {cache} {name}: {provenance_line(prov)}", file=out)
 
 
 def main(argv=None):

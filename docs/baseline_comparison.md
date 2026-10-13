@@ -151,21 +151,37 @@ build loads `control_sw` (`tta_report` in `fpga/vivado/tta.tcl`), NEORV32
 the two bitstreams of the board runs (`nrv_report 1`, `nrv_report 0` in
 `fpga/vivado/nrv.tcl`).
 
-**Whole design minus the plant** (LUT / FF / BRAM36 / DSP). The plant is the
-same RTL on both sides (TTA 453 / 372 / 0 / 4, NEORV32 457 / 372 / 0 / 4) and
-is taken out.
+**Which LUT count (audit A6-1).** Two counts exist. Vivado's "Slice LUTs"
+(`utilization.rpt`) counts physical 6-input LUTs after two small functions
+share one; the number of LUT primitive cells counts each function and runs
+13 to 17 % higher. The tables of this page were made with the cell count and
+called it LUT; they are now labelled as such, with Vivado's Slice LUTs from the
+same saved reports next to them. From the next `nrv_report` / `tta_report`
+both are printed and saved in `report_summary.txt`, and Slice LUTs is the
+figure to report.
+
+**Whole design minus the plant** (LUT cells / FF / BRAM36 / DSP). The plant is
+the same RTL on both sides (TTA 453 / 372 / 0 / 4, NEORV32 457 / 372 / 0 / 4)
+and is taken out.
 
 | | TTA | NEORV32 c1 | NEORV32 c0 |
 |---|---|---|---|
 | whole design minus plant | **1748 / 1369 / 8 / 3** | **3635 / 2482 / 39 / 4** | **2972 / 2244 / 34 / 4** |
+| Slice LUTs (Vivado), whole design / minus plant | 1882 / 1512 | 3609 / 3234 | 2965 / 2589 |
 | contains | core with its memories, timer and telemetry FIFO; telemetry UART; switch debounce (27 / 76) | NEORV32; code and data memory; `xbus_hil` (timer, monitor, record UART: c1 490 / 947, c0 422 / 947); break reset | same as c1 |
+
+The Slice LUT row subtracts the plant's Slice LUTs from `utilization_hier.rpt`
+(370, 375, 376). Vivado notes that hierarchical figures do not add up exactly
+when LUTs are shared across a boundary, so the minus-plant values are close,
+not exact. The FF, BRAM and DSP figures are the same in both counts.
 
 **Processor alone.** The boundaries differ, so this row is not a like-for-like
 comparison:
 
 | | TTA core | NEORV32 c1 | NEORV32 c0 |
 |---|---|---|---|
-| LUT / FF / BRAM36 / DSP | 1650 / 1233 / 8 / 3 | 3077 / 1486 / 7 / 4 | 2486 / 1248 / 2 / 4 |
+| LUT cells / FF / BRAM36 / DSP | 1650 / 1233 / 8 / 3 | 3077 / 1486 / 7 / 4 | 2486 / 1248 / 2 / 4 |
+| Slice LUTs (Vivado) | 1445 | 2752 | 2193 |
 | includes | instruction and data memory (4 + 4 BRAM36), timer, telemetry FIFO | I$ and D$, UART0, GPTMR, bootloader ROM | UART0, GPTMR, bootloader ROM |
 | excludes | | the 128 KB memory (32 BRAM36), timer and monitor (`xbus_hil`) | same as c1 |
 
@@ -193,12 +209,15 @@ The TTA's WNS varies between implementation runs with the loaded image
 | NEORV32 c1 | 0.160 W | 0.061 W (NEORV32 0.052) | 0.099 W | Medium |
 | NEORV32 c0 | 0.134 W | 0.035 W (NEORV32 0.027) | 0.099 W | Medium |
 
-These are not measurements. All three reports carry the same warning that
-high-fanout reset nets are asserted for long periods, which makes the
-estimate inaccurate; the TTA estimate has Low confidence because more than
-75% of its I/O has no activity specified; and device static power, about
-0.1 W, is most of each total. Only the order of the dynamic estimates is
-reported, not a ratio.
+These are not measurements. During `report_power` Vivado warned for all three
+builds that high-fanout reset nets are asserted for long periods, which makes
+the estimate inaccurate. That warning is a console message, not part of
+`power.rpt`, and the console of those runs was not saved (audit A6-5); from
+the next report the number of warnings `report_power` issues is saved in
+`report_summary.txt`, and their text stays in the Vivado log. The TTA estimate
+has Low confidence because more than 75 % of its inputs have no activity
+specified (`power.rpt`), and device static power, about 0.1 W, is most of each
+total. Only the order of the dynamic estimates is reported, not a ratio.
 
 ## Reproducing
 
@@ -211,4 +230,19 @@ reported, not a ratio.
 
 Vivado Tcl Console: `tta_report` with `Time_Predictable_TTA.xpr` open and the
 `control_sw` image built; `nrv_report 1` and `nrv_report 0` after sourcing
-`fpga/vivado/nrv.tcl`.
+`fpga/vivado/nrv.tcl`. Each writes its printed summary (WNS, WHS, Slice LUTs
+and LUT cells per block, power, number of `report_power` warnings) to
+`report_summary.txt` next to the reports; keep the Vivado log of the session
+for the text of the warnings.
+
+Provenance (audit A5-3): `py -m host.baseline.board build` writes, next to
+each executable, `manifest.json` with what it was built from (git commit,
+tracked and untracked changes, sha256 of every file under `baseline/sw`, the
+NEORV32 submodule commit, sha256 of every changed or untracked file in the
+repository and in the submodule, the GCC version) bound to the executable's
+sha256.
+`run` refuses an executable its manifest does not describe and records the
+manifest, the sources changed since the build, the git state at run time and
+the sha256 of the bitstream file on disk in `summary.json`;
+`py -m host.baseline.board report` lists them under the tables. The 14 runs
+in `baseline_board_results.md` were made before this and have none.

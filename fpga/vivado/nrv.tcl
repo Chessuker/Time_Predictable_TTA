@@ -9,7 +9,8 @@
 #                     synthesise, implement and write the bitstream; prints WNS/WHS
 #   nrv_report cache  timing, utilisation of the whole design, the baseline system,
 #                     NEORV32 alone and the parts of the system (memories, monitor,
-#                     plant), and the power estimate, into build/vivado_nrv_c<cache>/
+#                     plant), and the power estimate, into build/vivado_nrv_c<cache>/;
+#                     the printed summary also goes to report_summary.txt there
 #   nrv_bit cache     path of the bitstream, for Program Device
 #
 # Program with the Hardware Manager as usual, then use the host scripts in
@@ -18,6 +19,7 @@
 
 # the repository root: this file is <root>/fpga/vivado/nrv.tcl
 set ::nrv_root [file normalize [file join [file dirname [info script]] .. ..]]
+source [file join [file dirname [file normalize [info script]]] report_common.tcl]
 
 proc nrv_dir {cache} { return [file join $::nrv_root build vivado_nrv_c$cache] }
 
@@ -124,25 +126,26 @@ proc nrv_report {cache} {
     nrv_open $cache
     if {[current_design -quiet] ne "impl_1"} { open_run impl_1 }
     set out [nrv_dir $cache]
-    nrv_timing
+    lassign [nrv_timing] wns whs
     report_timing_summary -file [file join $out timing.rpt]
     report_utilization -hierarchical -hierarchical_depth 3 -file [file join $out utilization_hier.rpt]
     report_utilization -file [file join $out utilization.rpt]
-    report_power -file [file join $out power.rpt]
+    lassign [rpt_power [file join $out power.rpt]] warn crit
+    set now [clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S}]
+    set lines [list "nrv_report: c$cache, $now, WNS $wns ns, WHS $whs ns"]
     # whole design, the baseline system, NEORV32 alone, then the parts of the
     # system: code and data memory, monitor/timer, plant (for the TTA comparison)
     foreach {name cell} {total "" system u_soc cpu u_soc/u_cpu code u_soc/u_code data u_soc/u_data
                          hil u_soc/u_hil plant u_soc/u_env} {
-        if {$cell eq ""} { set in "" } else { set in " && NAME =~ $cell/*" }
-        puts [format "nrv_report: %-6s LUT %6d  FF %6d  BRAM36 %5.1f  DSP %3d" $name \
-            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == LUT$in"]] \
-            [llength [get_cells -hier -quiet -filter "PRIMITIVE_GROUP == FLOP_LATCH$in"]] \
-            [expr {[llength [get_cells -hier -quiet -filter "REF_NAME == RAMB36E1$in"]] \
-                   + 0.5 * [llength [get_cells -hier -quiet -filter "REF_NAME == RAMB18E1$in"]]}] \
-            [llength [get_cells -hier -quiet -filter "REF_NAME =~ DSP48*$in"]]]
+        lappend lines [rpt_block nrv_report $name $cell]
     }
     set w "?"
-    regexp {Total On-Chip Power \(W\)\s*\|\s*([0-9.]+)} [report_power -return_string] -> w
-    puts "nrv_report: total on-chip power $w W (vectorless estimate)"
-    puts "nrv_report: reports in $out"
+    set f [open [file join $out power.rpt]]
+    regexp {Total On-Chip Power \(W\)\s*\|\s*([0-9.]+)} [read $f] -> w
+    close $f
+    lappend lines "nrv_report: total on-chip power $w W (vectorless estimate); report_power issued\
+ $warn WARNING and $crit CRITICAL WARNING messages (their text is in the Vivado log)"
+    foreach l $lines { puts $l }
+    rpt_save [file join $out report_summary.txt] $lines
+    puts "nrv_report: reports and report_summary.txt in $out"
 }
