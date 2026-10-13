@@ -188,6 +188,11 @@ error รายงานเป็น `file:line:col: error: message` และ a
 
 **Static check ตาม timing_model §4** assembler รัน S1–S5 และ S7 หลัง assemble สำเร็จ ส่วน S6 เป็นงานของ WCET tool
 - ส่วนหนึ่งของ S5 (CFG แบบ structured): **target ของ jump ต้องอยู่ใน function เดียวกับ move ที่ jump** การเข้า function อื่นทำได้ทาง `pc.t_call` เท่านั้น เพื่อให้แต่ละ function เป็น CFG ปิดที่วิเคราะห์แยกกันได้
+- ส่วนหนึ่งของ S5 (return ต้องเป็น return จริง): `pc.link` เขียนได้ (isa.md §6) ถ้าไม่ตรวจ `#x -> pc.link` หรือ `trap.epc -> pc.link` ตามด้วย `pc.link -> pc.t_jump` จะกลายเป็น indirect jump ที่ CFG มองว่าเป็น return assembler จึงตรวจทุก path ว่าตอนถึง return `pc.link` ยังถือ return address ของ function นั้นอยู่
+  - เก็บและคืนได้โดย copy ตรงๆ ผ่าน `r0`–`r15`, `pc.link` หรือผ่าน memory (`pc.link -> mem.data_in` แล้ว store และ load ที่ address immediate เดียวกัน)
+  - ค่าที่ผ่าน FU อื่น (เช่น ALU) หรือ register ที่ callee อาจเขียนทับ (รวม callee ของ callee) ถือว่าไม่ใช่ return address แล้ว และหลัง call `pc.link` ชี้กลับมาที่ call นั้นเอง ต้องคืนค่าก่อน return
+  - store ที่ address มาจาก register อาจทับ word ไหนก็ได้ ถ้าตอนนั้น `mem.data_in` ไม่ใช่ return address ทุกสำเนาใน memory ถือว่าหาย
+  - function ที่ถูกใช้เป็น trap handler ห้าม return เพราะ trap ไม่ได้ตั้ง `pc.link` (isa.md §9 ไม่มี return จาก trap) ถ้าเขียน `trap.handler` จาก register assembler จะไม่รู้ว่า function ไหนเป็น handler จึงถือว่าทุก function อาจเป็น
 
 ---
 

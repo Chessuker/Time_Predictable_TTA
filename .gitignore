@@ -45,3 +45,10 @@ formal/*/
 
 # Lecture site (local only)
 lecture/
+
+# NEORV32 programs built in place (the tests build into build/)
+baseline/sw/**/*.elf
+baseline/sw/**/*.bin
+baseline/sw/**/*.hex
+baseline/sw/**/*.asm
+baseline/sw/**/build/

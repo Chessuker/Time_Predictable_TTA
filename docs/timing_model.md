@@ -363,6 +363,8 @@ freeze ครบทั้ง 5 ข้อแล้ว (2026-09-29)
 4. **[freeze] ค่าหลัง reset** ทุก state ที่ software อ่านได้เป็น 0 (ดู §1)
 5. **[freeze] นิยาม latency ใน R2** (อ่านได้ที่ `c + L`) ทำให้ latency 0 กับ 1 ในแผน §4 มีผลเท่ากัน ค่า L ของทุก FU เป็น 1 ยกเว้น MUL = 2 (ดูหัวข้อ MUL ด้านล่าง)
 
+**ยังเปิด (audit A3-4, 2026-10-13):** §3 กำหนดว่า task-level WCET วัดจาก wake ถึง `t_clear` แต่ยังไม่ได้กำหนดว่า WCET tool ต้องพิสูจน์อะไรกับ deadline ของ `t_arm` คือ (1) ต้องเทียบกับ `deadline − 1` หรือไม่ (2) นับเวลาข้าม stall ของ `t_wait` และ segment ที่สายอย่างไร (3) ทำอย่างไรเมื่อ v มาจาก register หรือ anchor ไม่รู้ (segment ที่เริ่มที่ entry) จนกว่าจะตัดสิน tool ติดป้าย segment ที่อาจรันขณะ armed ว่า deadline ไม่ได้ตรวจ (wcet_method §5) ส่วน semantics ตอนรันใน R6 ไม่เปลี่ยน
+
 ### MUL *(ตัดสิน 2026-09-30, รอลง isa.md)*
 
 - **Semantics:** signed 32 × 32 และ `mul.out` ให้ผล 32 bit ล่าง แบบเดียวกับ `mul` ของ RISC-V ส่วน 32 bit บนยังไม่มี port แต่กันเลข port ID ไว้สำหรับ `mul.out_hi` แบบเดียวกับ A5
