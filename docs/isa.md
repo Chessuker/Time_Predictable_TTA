@@ -221,6 +221,7 @@ semantics และเวลาของทุก operation อยู่ใน t
 - address ส่งผ่าน trigger โดยตรง ไม่มี port `addr` แยกตามแผน §4 เพื่อประหยัด 1 move ต่อการเข้าถึง
 - store ที่ cycle `c` มองเห็นได้โดย load ที่ trigger ตั้งแต่ `c + 1`
 - address ที่เกินขนาดของ data memory เป็น illegal (cause 4)
+- code memory มี address 0 ถึง ขนาด − 1 word สุดท้ายเป็น word ปกติ ถ้า fetch ที่ address ≥ ขนาด (วิ่งเลย word สุดท้าย หรือ trap เข้า handler ที่อยู่นอก code memory) จะได้ word 0 ซึ่ง illegal เสมอ (§2) จึง trap ด้วย cause 2 และ `trap.epc` เป็น address นั้น PC ไม่วนกลับไปต้น memory และไม่ถูก clamp ส่วน jump, call และ return ไปที่ address ≥ ขนาดเป็น cause 5 ที่ตัว jump ตาม §6 *(ชี้แจงเพิ่ม 2026-10-13 จาก audit A1-1: ไม่เปลี่ยนกฎเดิม เขียนสิ่งที่ §2 กับ §6 กำหนดไว้แล้วให้ครอบกรณีนี้)*
 - ขนาดของ code และ data memory เป็น parameter ของ implementation (หมายเหตุ implementation: บน Arty ตั้งต้นที่อย่างละ 4,096 word) ค่าเริ่มต้นของ data memory (literal pool) โหลดมาพร้อม image ของโปรแกรม
 
 ---
@@ -242,6 +243,7 @@ semantics และเวลาของทุก operation อยู่ใน t
 - ถ้า deadline กับ illegal operation เกิดใน cycle เดียวกัน deadline ชนะ (`cause = 1`) และ move นั้นไม่ถูกตรวจ legality
 - `trap.cause` ถูกตั้ง, `armed ← 0`, `trapped ← 1`
 - ถ้า `trap.handler ≠ 0` move แรกของ handler execute ที่ `d + 1 + H`
+  - ถ้า `trap.handler` อยู่นอก code memory word ที่ fetch ได้คือ word 0 (§8) ซึ่ง trap ขณะ `trapped = 1` จึงเป็น double fault และ core halt
 - ถ้า `trap.handler = 0` (ค่าหลัง reset) core **halt**
 
 **Phase 1 ไม่มี return จาก trap** handler มีไว้ทำ safe state เช่นเขียน 0 ลง `io.pwm_cmd` ส่ง telemetry แล้วจบด้วย `trap.t_halt`

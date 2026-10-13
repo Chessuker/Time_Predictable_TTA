@@ -200,7 +200,8 @@ class Simulator:
     # ---------------------------------------------------------------- one move
     def _execute(self, c):
         pc = self.pc
-        word = self.imem[pc] if pc < len(self.imem) else 0
+        # outside code memory (also past a longer image) reads as word 0: illegal (isa.md sec. 2, 8)
+        word = self.imem[pc] if pc < min(self.imem_words, len(self.imem)) else 0
         if illegal_reason(word) is not None:
             self._trap(c, spec.TrapCause.ILLEGAL_PORT)
             return

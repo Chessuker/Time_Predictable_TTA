@@ -18,6 +18,8 @@
 //   A5 halt: no event after it, and it happens exactly when   (isa.md sec. 9)
 //      t_halt retires or a trap finds handler = 0 / trapped
 //   A6 FU outputs change only after their own trigger         (R2)
+//   A7 no move from outside code memory retires: a fetch at   (isa.md sec. 2, 8)
+//      an address >= IMEM_WORDS reads as word 0 and traps
 // Invariants (I*) tie the model to the core's state; k-induction needs them.
 //
 // Free values. yosys-slang ignores (* anyseq *) on internal variables and
@@ -242,6 +244,11 @@ module tta_formal import tta_pkg::*; (
         end
       end
 
+      // A7 (audit A1-1): a move fetched from outside code memory is illegal
+      // (word 0), so it never retires; the PC is not wrapped
+      if (u_core.x_valid && u_core.x_pc >= 32'(IMEM_WORDS)) assert (u_core.x_illegal);
+      if (ret) assert (rv_pc < 32'(IMEM_WORDS));
+
       // the X fields come from one word; A4 relies on the source select
       // (bit numbers of tta_core's src_sel_e; slang cannot read the enum
       // through the hierarchy)
@@ -295,6 +302,7 @@ module tta_formal import tta_pkg::*; (
              && rv_value != '0 && last_load != '0);                                          // C9 data
       cover (ret && !rv_imm && rv_src == P_IO_ENCODER && enc_seen && rv_value != last_enc
              && rv_value != '0 && last_enc != '0);                                           // C10 io.encoder
+      cover (trp && tr_cause == CAUSE_ILLEGAL_PORT && tr_epc >= 32'(IMEM_WORDS));          // C11 fetch past code memory
     end
   end
 endmodule
